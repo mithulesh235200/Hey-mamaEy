@@ -223,7 +223,16 @@ export function hydrate() {
   hydrated = true;
   loadPrefs();
   set({ userId: prefs.userId, displayName: prefs.displayName });
-  void loadSpaces();
+  void (async () => {
+    await loadSpaces();
+    const inviteCode = new URLSearchParams(window.location.search).get("space");
+    if (!inviteCode) return;
+
+    const joined = await joinSpace(inviteCode);
+    if (joined) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  })();
 
   if (!pollTimer) {
     pollTimer = setInterval(() => {

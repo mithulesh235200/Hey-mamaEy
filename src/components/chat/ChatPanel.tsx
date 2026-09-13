@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Copy,
   Image as ImageIcon,
   Menu,
   Mic,
   Paperclip,
   Send,
+  Share2,
   Square,
   AudioLines,
   X,
@@ -46,6 +46,27 @@ export function ChatPanel({
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
 
+  const shareSpace = async () => {
+    const url = `${window.location.origin}${window.location.pathname}?space=${encodeURIComponent(space?.code ?? "")}`;
+    const shareData = {
+      title: `${space?.name ?? "Hey Mama"} invite`,
+      text: `Join ${space?.name ?? "this Space"} on HeyMamaEy`,
+      url,
+    };
+
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      toast.success("Invite link copied", { description: url });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      toast.error("Couldn’t share the invite link");
+    }
+  };
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, space?.id]);
@@ -61,9 +82,11 @@ export function ChatPanel({
         >
           <Menu className="size-4" />
         </button>
-        <div className="flex size-16 items-center justify-center rounded-2xl bg-primary/15 text-primary glow-ring">
-          <Send className="size-7" />
-        </div>
+        <img
+          src="/heymama.jpeg"
+          alt="Hey Mama"
+          className="size-20 rounded-3xl object-cover shadow-lg glow-ring"
+        />
         <div>
           <h2 className="text-lg font-semibold">No Space selected</h2>
           <p className="mt-1 max-w-sm text-sm text-muted-foreground">
@@ -172,13 +195,12 @@ export function ChatPanel({
         </div>
         <button
           type="button"
-          onClick={async () => {
-            await navigator.clipboard.writeText(space.code);
-            toast.success("Space Number copied", { description: space.code });
-          }}
+          onClick={() => void shareSpace()}
           className="inline-flex items-center gap-1.5 rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-medium transition-colors hover:text-primary"
         >
-          <Copy className="size-3.5" /> Share code
+          <Share2 className="size-3.5" />
+          <span className="hidden sm:inline">Share invite</span>
+          <span className="sm:hidden">Share</span>
         </button>
       </header>
 
@@ -201,8 +223,8 @@ export function ChatPanel({
       </div>
 
       <footer className="border-t border-border bg-sidebar p-3">
-        <div className="flex items-end gap-2">
-          <div className="flex gap-1">
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="flex shrink-0 gap-1">
             <IconBtn label="Send image" onClick={() => mediaInputRef.current?.click()}>
               <ImageIcon className="size-4" />
             </IconBtn>
@@ -224,7 +246,7 @@ export function ChatPanel({
             }}
             rows={1}
             placeholder="Message — **bold**, _italic_, `code`, emoji 🎉"
-            className="thin-scroll max-h-32 min-h-10 flex-1 resize-none rounded-xl bg-card px-3 py-2.5 text-sm outline-none ring-1 ring-input focus:ring-primary"
+            className="thin-scroll order-2 min-w-[min(100%,12rem)] max-h-32 min-h-10 flex-1 resize-none rounded-xl bg-card px-3 py-2.5 text-sm outline-none ring-1 ring-input focus:ring-primary sm:order-none"
           />
           <IconBtn
             label={recording ? "Stop recording" : "Record voice note"}
@@ -237,7 +259,7 @@ export function ChatPanel({
             type="button"
             onClick={() => void submitText()}
             aria-label="Send message"
-            className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-transform hover:scale-105"
+            className="order-2 flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-transform hover:scale-105 sm:order-none"
           >
             <Send className="size-4" />
           </button>

@@ -37,6 +37,24 @@ function Index() {
     hydrate();
   }, []);
 
+  if (!state.ready) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background px-6 text-foreground">
+        <div className="flex max-w-xs flex-col items-center text-center">
+          <img
+            src="/heymama.jpeg"
+            alt="Hey Mama"
+            className="size-20 rounded-3xl object-cover shadow-lg glow-ring"
+          />
+          <p className="mt-4 text-sm font-medium">Getting your Spaces ready...</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Your local identity stays on this device.
+          </p>
+        </div>
+      </main>
+    );
+  }
+
   const activeSpace = state.spaces.find((s) => s.id === state.activeSpaceId) ?? null;
   const activeMessages = activeSpace
     ? state.messages.filter((m) => m.spaceId === activeSpace.id)
