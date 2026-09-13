@@ -74,9 +74,16 @@ export function Sidebar({
   return (
     <aside className="flex h-full w-full flex-col border-r border-border bg-sidebar">
       <div className="border-b border-border p-4">
-        <h1 className="text-lg font-bold tracking-tight">
-          Hey<span className="text-primary">Mama</span>Ey
-        </h1>
+        <div className="flex items-center gap-2.5">
+          <img
+            src="/heymama.jpeg"
+            alt="Hey Mama"
+            className="size-10 shrink-0 rounded-xl object-cover shadow-sm"
+          />
+          <h1 className="text-lg font-bold tracking-tight">
+            Hey<span className="text-primary">Mama</span>Ey
+          </h1>
+        </div>
         <p className="mt-0.5 text-[11px] text-muted-foreground">Codes only. No phone, no email.</p>
 
         <div className="mt-3 rounded-xl bg-card p-3 glow-ring">
