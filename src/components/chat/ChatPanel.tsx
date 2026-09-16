@@ -25,6 +25,7 @@ import {
   type Space,
 } from "@/lib/heymama";
 import { MessageBubble } from "./MessageBubble";
+import { InAppCall } from "./InAppCall";
 
 const MAX_BYTES = 12 * 1024 * 1024;
 
@@ -45,6 +46,7 @@ export function ChatPanel({
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [editing, setEditing] = useState<Message | null>(null);
+  const [callMode, setCallMode] = useState<"voice" | "video" | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -70,12 +72,6 @@ export function ChatPanel({
       if (error instanceof DOMException && error.name === "AbortError") return;
       toast.error("Couldn’t share the invite link");
     }
-  };
-
-  const openCall = (video: boolean) => {
-    const room = `HeyMamaEy-${space?.code.replace(/[^0-9A-Z-]/gi, "")}`;
-    const options = video ? "" : "#config.startWithVideoMuted=true";
-    window.open(`https://meet.jit.si/${room}${options}`, "_blank", "noopener,noreferrer");
   };
 
   useEffect(() => {
@@ -223,10 +219,10 @@ export function ChatPanel({
           <span className="hidden sm:inline">Share invite</span>
           <span className="sm:hidden">Share</span>
         </button>
-        <IconBtn label="Start voice call" onClick={() => openCall(false)}>
+        <IconBtn label="Start voice call" onClick={() => setCallMode("voice")}>
           <Phone className="size-3.5" />
         </IconBtn>
-        <IconBtn label="Start video call" onClick={() => openCall(true)}>
+        <IconBtn label="Start video call" onClick={() => setCallMode("video")}>
           <Video className="size-3.5" />
         </IconBtn>
       </header>
@@ -370,6 +366,12 @@ export function ChatPanel({
           />
         </div>
       )}
+      <InAppCall
+        spaceCode={space.code}
+        userId={userId}
+        requestedMode={callMode}
+        onClose={() => setCallMode(null)}
+      />
     </section>
   );
 }
