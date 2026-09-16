@@ -40,14 +40,20 @@ export function Sidebar({
   };
 
   const handleCreate = async () => {
-    const space = await createSpace(newName || `Space of ${userId.slice(0, 9)}`);
-    if (!space) {
-      toast.error("Couldn't create the Space — try again");
+    try {
+      const space = await createSpace(newName || `Space of ${userId.slice(0, 9)}`);
+      setNewName("");
+      toast.success(`Space created — code ${space.code}`);
+      onNavigate?.();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown Supabase error";
+      toast.error("Couldn't create the Space", {
+        description: message.includes("PGRST202") || message.includes("schema cache")
+          ? "Supabase migrations are not applied to this project yet."
+          : message,
+      });
       return;
     }
-    setNewName("");
-    toast.success(`Space created — code ${space.code}`);
-    onNavigate?.();
   };
 
   const handleJoin = async () => {
