@@ -1,4 +1,3 @@
 {
-  "buildCommand": "npm run build",
-  "cleanUrls": true
+  "buildCommand": "npm run build"
 }

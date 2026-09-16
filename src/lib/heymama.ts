@@ -325,22 +325,6 @@ export async function joinSpace(rawCode: string): Promise<Space | null> {
 }
 
 export function leaveSpace(spaceId: string) {
-
-  export async function deleteSpace(spaceId: string) {
-    const space = state.spaces.find((item) => item.id === spaceId);
-    if (!space) return false;
-    const { data, error } = await supabase.rpc("delete_space", { p_code: space.code });
-    if (error || data !== true) return false;
-
-    prefs.codes = prefs.codes.filter((code) => code !== space.code);
-    savePrefs();
-    set({
-      spaces: state.spaces.filter((item) => item.id !== spaceId),
-      messages: state.messages.filter((item) => item.spaceId !== spaceId),
-      activeSpaceId: state.activeSpaceId === spaceId ? null : state.activeSpaceId,
-    });
-    return true;
-  }
   const space = state.spaces.find((s) => s.id === spaceId);
   if (space) {
     prefs.codes = prefs.codes.filter((c) => c !== space.code);

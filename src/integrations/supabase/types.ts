@@ -104,10 +104,6 @@ export type Database = {
           text: string | null;
         }[];
       };
-      delete_space: {
-        Args: { p_code: string };
-        Returns: boolean;
-      };
       delete_space_message: {
         Args: { p_author_id: string; p_code: string; p_message_id: string };
         Returns: boolean;
