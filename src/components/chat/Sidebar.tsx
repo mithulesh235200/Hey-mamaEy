@@ -1,10 +1,8 @@
 import { useState } from "react";
 import { Copy, Hash, LogOut, Plus, RefreshCw, Users } from "lucide-react";
-import { Copy, Hash, LogOut, Plus, RefreshCw, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import {
   createSpace,
-    deleteSpace,
   joinSpace,
   leaveSpace,
   regenerateId,
@@ -59,14 +57,6 @@ export function Sidebar({
   };
 
   const handleJoin = async () => {
-
-      const handleDeleteSpace = async (space: Space) => {
-        if (!window.confirm(`Delete "${space.name}" and all its messages permanently?`)) return;
-        const deleted = await deleteSpace(space.id);
-        toast[deleted ? "success" : "error"](
-          deleted ? "Space and messages deleted" : "Space could not be deleted",
-        );
-      };
     const space = await joinSpace(joinCode);
     if (!space) {
       toast.error("No Space found with that number", {
@@ -245,15 +235,6 @@ export function Sidebar({
               className="opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
             >
               <LogOut className="size-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleDeleteSpace(s)}
-              aria-label={`Delete ${s.name} and its messages`}
-              title="Delete Space and all messages"
-              className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
-            >
-              <Trash2 className="size-3.5" />
             </button>
           </div>
         ))}
