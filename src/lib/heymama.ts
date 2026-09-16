@@ -154,7 +154,7 @@ const toMessage = (r: MessageRow): Message => ({
 
 /* ---------- hydrate + polling ---------- */
 
-const POLL_MS = 2500;
+const POLL_MS = 10000;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 async function fetchSpace(code: string) {
@@ -174,6 +174,18 @@ async function fetchMessages(code: string): Promise<Message[]> {
   try {
     const { data, error } = await supabase.rpc("get_space_messages", {
       p_code: code,
+    });
+    return error ? [] : ((data ?? []) as MessageRow[]).map(toMessage);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchMessagesSince(code: string, after: number): Promise<Message[]> {
+  try {
+    const { data, error } = await supabase.rpc("get_space_messages_since", {
+      p_code: code,
+      p_after: new Date(Math.max(0, after - 1)).toISOString(),
     });
     return error ? [] : ((data ?? []) as MessageRow[]).map(toMessage);
   } catch {
@@ -211,7 +223,9 @@ async function refreshActiveSpace() {
   if (typeof document !== "undefined" && document.hidden) return;
   const active = state.spaces.find((s) => s.id === state.activeSpaceId);
   if (!active) return;
-  const fresh = await fetchMessages(active.code);
+  const activeMessages = state.messages.filter((m) => m.spaceId === active.id);
+  const newest = activeMessages.reduce((latest, message) => Math.max(latest, message.createdAt), 0);
+  const fresh = await fetchMessagesSince(active.code, newest);
   const known = new Set(state.messages.filter((m) => m.spaceId === active.id).map((m) => m.id));
   const added = fresh.filter((m) => !known.has(m.id));
   if (added.length === 0) return;
@@ -311,6 +325,22 @@ export async function joinSpace(rawCode: string): Promise<Space | null> {
 }
 
 export function leaveSpace(spaceId: string) {
+
+  export async function deleteSpace(spaceId: string) {
+    const space = state.spaces.find((item) => item.id === spaceId);
+    if (!space) return false;
+    const { data, error } = await supabase.rpc("delete_space", { p_code: space.code });
+    if (error || data !== true) return false;
+
+    prefs.codes = prefs.codes.filter((code) => code !== space.code);
+    savePrefs();
+    set({
+      spaces: state.spaces.filter((item) => item.id !== spaceId),
+      messages: state.messages.filter((item) => item.spaceId !== spaceId),
+      activeSpaceId: state.activeSpaceId === spaceId ? null : state.activeSpaceId,
+    });
+    return true;
+  }
   const space = state.spaces.find((s) => s.id === spaceId);
   if (space) {
     prefs.codes = prefs.codes.filter((c) => c !== space.code);
