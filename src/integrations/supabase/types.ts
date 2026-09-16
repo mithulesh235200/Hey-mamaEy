@@ -87,6 +87,27 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      delete_space_message: {
+        Args: { p_author_id: string; p_code: string; p_message_id: string };
+        Returns: boolean;
+      };
+      edit_space_message: {
+        Args: { p_author_id: string; p_code: string; p_message_id: string; p_text: string };
+        Returns: {
+          author_id: string;
+          author_name: string;
+          created_at: string;
+          data_url: string | null;
+          file_name: string | null;
+          file_size: number | null;
+          forwarded: boolean;
+          id: string;
+          kind: string;
+          mime_type: string | null;
+          space_id: string;
+          text: string | null;
+        };
+      };
       create_space: {
         Args: { p_name: string };
         Returns: {

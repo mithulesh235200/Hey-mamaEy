@@ -4,10 +4,12 @@ import {
   Menu,
   Mic,
   Paperclip,
+  Phone,
   Send,
   Share2,
   Square,
   AudioLines,
+  Video,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -15,6 +17,8 @@ import {
   formatBytes,
   kindForFile,
   readFileAsDataUrl,
+  deleteMessage,
+  editMessage,
   sendMessage,
   type MediaKind,
   type Message,
@@ -40,6 +44,7 @@ export function ChatPanel({
   const [text, setText] = useState("");
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
+  const [editing, setEditing] = useState<Message | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -65,6 +70,12 @@ export function ChatPanel({
       if (error instanceof DOMException && error.name === "AbortError") return;
       toast.error("Couldn’t share the invite link");
     }
+  };
+
+  const openCall = (video: boolean) => {
+    const room = `HeyMamaEy-${space?.code.replace(/[^0-9A-Z-]/gi, "")}`;
+    const options = video ? "" : "#config.startWithVideoMuted=true";
+    window.open(`https://meet.jit.si/${room}${options}`, "_blank", "noopener,noreferrer");
   };
 
   useEffect(() => {
@@ -109,6 +120,16 @@ export function ChatPanel({
   const submitText = async () => {
     const value = text.trim();
     if (!value) return;
+    if (editing) {
+      const updated = await editMessage(editing.id, space.id, value);
+      if (updated) {
+        setText("");
+        setEditing(null);
+      } else {
+        toast.error("Message could not be edited");
+      }
+      return;
+    }
     const ok = await sendMessage({ spaceId: space.id, kind: "text", text: value });
     if (ok) {
       setText("");
@@ -202,6 +223,12 @@ export function ChatPanel({
           <span className="hidden sm:inline">Share invite</span>
           <span className="sm:hidden">Share</span>
         </button>
+        <IconBtn label="Start voice call" onClick={() => openCall(false)}>
+          <Phone className="size-3.5" />
+        </IconBtn>
+        <IconBtn label="Start video call" onClick={() => openCall(true)}>
+          <Video className="size-3.5" />
+        </IconBtn>
       </header>
 
       <div className="thin-scroll flex-1 space-y-3 overflow-y-auto p-4">
@@ -217,12 +244,38 @@ export function ChatPanel({
             mine={m.authorId === userId}
             onForward={onForward}
             onOpenImage={setLightbox}
+            onEdit={(message) => {
+              setEditing(message);
+              setText(message.text ?? "");
+            }}
+            onDelete={async (message) => {
+              if (!window.confirm("Delete this message?")) return;
+              const deleted = await deleteMessage(message.id, message.spaceId);
+              toast[deleted ? "success" : "error"](
+                deleted ? "Message deleted" : "Message could not be deleted",
+              );
+            }}
           />
         ))}
         <div ref={bottomRef} />
       </div>
 
       <footer className="border-t border-border bg-sidebar p-3">
+        {editing && (
+          <div className="mb-2 flex items-center justify-between rounded-lg bg-secondary px-3 py-2 text-xs text-muted-foreground">
+            <span>Editing message</span>
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(null);
+                setText("");
+              }}
+              className="font-semibold text-foreground hover:text-primary"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
         <div className="flex flex-wrap items-end gap-2">
           <div className="flex shrink-0 gap-1">
             <IconBtn label="Send image" onClick={() => mediaInputRef.current?.click()}>

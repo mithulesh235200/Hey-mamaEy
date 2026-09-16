@@ -1,4 +1,15 @@
-import { Download, FileArchive, FileText, File as FileIcon, Forward } from "lucide-react";
+import {
+  Clipboard,
+  Download,
+  Edit3,
+  FileArchive,
+  FileText,
+  File as FileIcon,
+  Forward,
+  Trash2,
+} from "lucide-react";
+import type { ReactNode } from "react";
+import { toast } from "sonner";
 import type { Message } from "@/lib/heymama";
 import { formatBytes, formatTime } from "@/lib/heymama";
 import { AudioMessage } from "./AudioMessage";
@@ -32,13 +43,28 @@ export function MessageBubble({
   mine,
   onForward,
   onOpenImage,
+  onEdit,
+  onDelete,
 }: {
   message: Message;
   mine: boolean;
   onForward: (m: Message) => void;
   onOpenImage: (src: string) => void;
+  onEdit: (m: Message) => void;
+  onDelete: (m: Message) => void;
 }) {
   const system = message.authorId === "SYSTEM";
+
+  const copyMessage = async () => {
+    const value = message.text ?? message.fileName ?? message.dataUrl;
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success("Copied to clipboard");
+    } catch {
+      toast.error("Couldn’t copy this message");
+    }
+  };
 
   if (system) {
     return (
@@ -132,15 +158,46 @@ export function MessageBubble({
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={() => onForward(message)}
-        aria-label="Forward message"
-        title="Forward"
-        className="mb-1 flex size-8 shrink-0 items-center justify-center rounded-full bg-card text-muted-foreground opacity-0 transition-all hover:text-primary focus-visible:opacity-100 group-hover:opacity-100"
-      >
-        <Forward className="size-4" />
-      </button>
+      <div className="mb-1 flex shrink-0 items-center gap-1 rounded-full bg-card p-1 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+        <ActionButton label="Copy message" onClick={() => void copyMessage()}>
+          <Clipboard className="size-3.5" />
+        </ActionButton>
+        {mine && message.kind === "text" && (
+          <ActionButton label="Edit message" onClick={() => onEdit(message)}>
+            <Edit3 className="size-3.5" />
+          </ActionButton>
+        )}
+        {mine && (
+          <ActionButton label="Delete message" onClick={() => onDelete(message)}>
+            <Trash2 className="size-3.5" />
+          </ActionButton>
+        )}
+        <ActionButton label="Forward message" onClick={() => onForward(message)}>
+          <Forward className="size-3.5" />
+        </ActionButton>
+      </div>
     </div>
+  );
+}
+
+function ActionButton({
+  children,
+  label,
+  onClick,
+}: {
+  children: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="flex size-8 items-center justify-center rounded-full transition-colors hover:bg-secondary hover:text-primary focus-visible:bg-secondary focus-visible:text-primary"
+    >
+      {children}
+    </button>
   );
 }

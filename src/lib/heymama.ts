@@ -273,7 +273,8 @@ export async function createSpace(name: string): Promise<Space | null> {
     p_name: name.trim() || "New Space",
   });
   const row = (Array.isArray(data) ? data[0] : data) as SpaceRow | null;
-  if (error || !row) return null;
+  if (error) throw new Error(error.message);
+  if (!row) throw new Error("The Space service returned no Space.");
 
   const space = toSpace(row);
   rememberCode(space.code);
@@ -373,6 +374,36 @@ export async function forwardMessage(message: Message, spaceId: string) {
     ...(message.mimeType !== undefined && { mimeType: message.mimeType }),
     forwarded: true,
   });
+}
+
+export async function editMessage(messageId: string, spaceId: string, text: string) {
+  const space = state.spaces.find((item) => item.id === spaceId);
+  if (!space) return null;
+  const { data, error } = await supabase.rpc("edit_space_message", {
+    p_code: space.code,
+    p_message_id: messageId,
+    p_author_id: state.userId,
+    p_text: text.trim(),
+  });
+  if (error) return null;
+  const row = (Array.isArray(data) ? data[0] : data) as MessageRow | null;
+  if (!row) return null;
+  const edited = toMessage(row);
+  set({ messages: state.messages.map((item) => (item.id === edited.id ? edited : item)) });
+  return edited;
+}
+
+export async function deleteMessage(messageId: string, spaceId: string) {
+  const space = state.spaces.find((item) => item.id === spaceId);
+  if (!space) return false;
+  const { data, error } = await supabase.rpc("delete_space_message", {
+    p_code: space.code,
+    p_message_id: messageId,
+    p_author_id: state.userId,
+  });
+  if (error || data !== true) return false;
+  set({ messages: state.messages.filter((item) => item.id !== messageId) });
+  return true;
 }
 
 /* ---------- helpers ---------- */
