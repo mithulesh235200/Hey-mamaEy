@@ -193,6 +193,13 @@ async function fetchMessagesSince(code: string, after: number): Promise<Message[
   }
 }
 
+const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+function filterRetained(messages: Message[]): Message[] {
+  const cutoff = Date.now() - RETENTION_MS;
+  return messages.filter((m) => m.createdAt >= cutoff);
+}
+
 async function loadSpaces() {
   if (prefs.codes.length === 0) {
     set({ spaces: [], messages: [], ready: true });
@@ -203,10 +210,11 @@ async function loadSpaces() {
     const spaces = results.filter((s): s is Space => s !== null);
     const ids = spaces.map((s) => s.id);
     const messageLists = await Promise.all(spaces.map((s) => fetchMessages(s.code)));
+    const validMessages = filterRetained(messageLists.flat());
 
     set({
       spaces,
-      messages: messageLists.flat(),
+      messages: validMessages,
       ready: true,
       activeSpaceId:
         state.activeSpaceId && ids.includes(state.activeSpaceId)
@@ -223,13 +231,14 @@ async function refreshActiveSpace() {
   if (typeof document !== "undefined" && document.hidden) return;
   const active = state.spaces.find((s) => s.id === state.activeSpaceId);
   if (!active) return;
-  const activeMessages = state.messages.filter((m) => m.spaceId === active.id);
+  const currentRetained = filterRetained(state.messages);
+  const activeMessages = currentRetained.filter((m) => m.spaceId === active.id);
   const newest = activeMessages.reduce((latest, message) => Math.max(latest, message.createdAt), 0);
   const fresh = await fetchMessagesSince(active.code, newest);
-  const known = new Set(state.messages.filter((m) => m.spaceId === active.id).map((m) => m.id));
-  const added = fresh.filter((m) => !known.has(m.id));
-  if (added.length === 0) return;
-  set({ messages: [...state.messages, ...added] });
+  const known = new Set(activeMessages.map((m) => m.id));
+  const added = filterRetained(fresh).filter((m) => !known.has(m.id));
+
+  set({ messages: [...currentRetained, ...added] });
 }
 
 export function hydrate() {

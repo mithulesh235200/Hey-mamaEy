@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Copy, Hash, LogOut, Plus, RefreshCw, Users } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Copy, Hash, LogOut, Palette, Plus, RefreshCw, Users } from "lucide-react";
 import { toast } from "sonner";
 import {
   createSpace,
@@ -11,6 +11,15 @@ import {
   type Message,
   type Space,
 } from "@/lib/heymama";
+
+type Theme = "dark" | "light" | "cyberpunk" | "sunset";
+
+const THEMES: { id: Theme; label: string; icon: string }[] = [
+  { id: "dark", label: "Midnight", icon: "🌙" },
+  { id: "light", label: "Light", icon: "☀️" },
+  { id: "cyberpunk", label: "Cyberpunk", icon: "⚡" },
+  { id: "sunset", label: "Sunset", icon: "🌅" },
+];
 
 export function Sidebar({
   userId,
@@ -30,6 +39,20 @@ export function Sidebar({
   const [restoreId, setRestoreId] = useState("");
   const [showRestore, setShowRestore] = useState(false);
 
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("heymamaey.theme") as Theme) || "dark";
+    }
+    return "dark";
+  });
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-theme", theme);
+      localStorage.setItem("heymamaey.theme", theme);
+    }
+  }, [theme]);
+
   const copyId = async () => {
     try {
       await navigator.clipboard.writeText(userId);
@@ -42,6 +65,7 @@ export function Sidebar({
   const handleCreate = async () => {
     try {
       const space = await createSpace(newName || `Space of ${userId.slice(0, 9)}`);
+      if (!space) return;
       setNewName("");
       toast.success(`Space created — code ${space.code}`);
       onNavigate?.();
@@ -80,17 +104,48 @@ export function Sidebar({
   return (
     <aside className="flex h-full w-full flex-col border-r border-border bg-sidebar">
       <div className="border-b border-border p-4">
-        <div className="flex items-center gap-2.5">
-          <img
-            src="/heymama.jpeg"
-            alt="Hey Mama"
-            className="size-10 shrink-0 rounded-xl object-cover shadow-sm"
-          />
-          <h1 className="text-lg font-bold tracking-tight">
-            Hey<span className="text-primary">Mama</span>Ey
-          </h1>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <img
+              src="/heymama.jpeg"
+              alt="Hey Mama"
+              className="size-10 shrink-0 rounded-xl object-cover shadow-sm"
+            />
+            <div>
+              <h1 className="text-lg font-bold tracking-tight leading-tight">
+                Hey<span className="text-primary">Mama</span>Ey
+              </h1>
+              <p className="text-[10px] text-muted-foreground">Codes only. No phone, no email.</p>
+            </div>
+          </div>
         </div>
-        <p className="mt-0.5 text-[11px] text-muted-foreground">Codes only. No phone, no email.</p>
+
+        {/* Theme Picker */}
+        <div className="mt-3">
+          <div className="mb-1.5 flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <Palette className="size-3" />
+            <span>Theme</span>
+          </div>
+          <div className="grid grid-cols-4 gap-1 rounded-xl bg-card p-1 border border-border">
+            {THEMES.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTheme(t.id)}
+                className={
+                  "flex items-center justify-center gap-1 rounded-lg py-1.5 text-[11px] font-medium transition-all " +
+                  (theme === t.id
+                    ? "bg-primary text-primary-foreground font-semibold shadow-sm scale-102"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/50")
+                }
+                title={t.label}
+              >
+                <span>{t.icon}</span>
+                <span className="hidden sm:inline text-[10px]">{t.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
 
         <div className="mt-3 rounded-xl bg-card p-3 glow-ring">
           <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Your ID</p>
