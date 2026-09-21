@@ -22,7 +22,19 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: "stun:stun4.l.google.com:19302" },
     { urls: "stun:stun.services.mozilla.com" },
     { urls: "stun:global.stun.twilio.com:3478" },
+    // TURN Relay Fallbacks (OpenRelay TCP/UDP relay for symmetric NATs / mobile 4G/5G data)
+    {
+      urls: [
+        "turn:openrelay.metered.ca:80",
+        "turn:openrelay.metered.ca:443",
+        "turn:openrelay.metered.ca:443?transport=tcp",
+      ],
+      username: "openrelay",
+      credential: "openrelay",
+    },
   ],
+  iceTransportPolicy: "all",
+  iceCandidatePoolSize: 10,
 };
 
 function startRingtone(): () => void {
@@ -91,6 +103,10 @@ export function InAppCall({
   const callIdRef = useRef<string | null>(null);
   const peerUserIdRef = useRef<string | null>(null);
   const pendingOfferRef = useRef<CallSignal | null>(null);
+  const offerRetryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const localOfferRef = useRef<RTCSessionDescriptionInit | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const screenTrackRef = useRef<MediaStreamTrack | null>(null);
@@ -105,11 +121,27 @@ export function InAppCall({
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState("");
 
+  const clearTimers = () => {
+    if (offerRetryTimerRef.current) {
+      clearInterval(offerRetryTimerRef.current);
+      offerRetryTimerRef.current = null;
+    }
+    if (disconnectTimerRef.current) {
+      clearTimeout(disconnectTimerRef.current);
+      disconnectTimerRef.current = null;
+    }
+    if (connectionTimeoutRef.current) {
+      clearTimeout(connectionTimeoutRef.current);
+      connectionTimeoutRef.current = null;
+    }
+  };
+
   const send = async (event: string, payload: CallSignal) => {
     await channelRef.current?.send({ type: "broadcast", event, payload });
   };
 
   const closePeer = () => {
+    clearTimers();
     if (screenTrackRef.current) {
       screenTrackRef.current.stop();
       screenTrackRef.current = null;
@@ -120,6 +152,7 @@ export function InAppCall({
     localStreamRef.current = null;
     remoteStreamRef.current = null;
     iceCandidatesQueueRef.current = [];
+    localOfferRef.current = null;
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
     setConnected(false);
@@ -140,7 +173,7 @@ export function InAppCall({
       try {
         await peer.addIceCandidate(candidate);
       } catch {
-        /* ignore invalid candidates */
+        /* ignore invalid candidate */
       }
     }
   };
@@ -174,8 +207,47 @@ export function InAppCall({
     };
 
     peer.onconnectionstatechange = () => {
-      if (peer.connectionState === "connected") setConnected(true);
-      if (["failed", "disconnected", "closed"].includes(peer.connectionState)) closePeer();
+      const state = peer.connectionState;
+      if (state === "connected") {
+        setConnected(true);
+        if (disconnectTimerRef.current) {
+          clearTimeout(disconnectTimerRef.current);
+          disconnectTimerRef.current = null;
+        }
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+      } else if (state === "disconnected") {
+        // Do NOT close immediately! Allow 15s grace period for reconnection or ICE pair switch.
+        if (!disconnectTimerRef.current) {
+          disconnectTimerRef.current = setTimeout(() => {
+            if (peer.connectionState !== "connected") {
+              closePeer();
+              setError("Call disconnected due to network failure.");
+            }
+          }, 15000);
+        }
+      } else if (state === "failed") {
+        // Attempt ICE restart before giving up
+        try {
+          if (typeof peer.restartIce === "function") {
+            peer.restartIce();
+          }
+        } catch {
+          /* ignore restart error */
+        }
+        if (!disconnectTimerRef.current) {
+          disconnectTimerRef.current = setTimeout(() => {
+            if (peer.connectionState !== "connected") {
+              closePeer();
+              setError("Connection failed. Please check network and try again.");
+            }
+          }, 12000);
+        }
+      } else if (state === "closed") {
+        closePeer();
+      }
     };
 
     peerRef.current = peer;
@@ -199,7 +271,32 @@ export function InAppCall({
       const peer = await createPeer(callId, callMode);
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
-      await send("call-offer", { callId, from: userId, mode: callMode, offer });
+      localOfferRef.current = offer;
+
+      const payload: CallSignal = { callId, from: userId, mode: callMode, offer };
+      await send("call-offer", payload);
+
+      // Re-transmit offer every 2.5s until answered or connected (up to 30 seconds)
+      let attempts = 0;
+      offerRetryTimerRef.current = setInterval(() => {
+        attempts++;
+        if (peerRef.current?.connectionState === "connected" || attempts > 12) {
+          if (offerRetryTimerRef.current) {
+            clearInterval(offerRetryTimerRef.current);
+            offerRetryTimerRef.current = null;
+          }
+          return;
+        }
+        void send("call-offer", payload);
+      }, 2500);
+
+      // 35-second overall connection timeout
+      connectionTimeoutRef.current = setTimeout(() => {
+        if (peerRef.current?.connectionState !== "connected") {
+          closePeer();
+          setError("Connection timed out. Receiver did not answer or network blocked.");
+        }
+      }, 35000);
     } catch {
       closePeer();
       setError("Camera or microphone permission is required for calls.");
@@ -217,12 +314,22 @@ export function InAppCall({
       await processQueuedCandidates();
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
-      await send("call-answer", {
+
+      const answerPayload: CallSignal = {
         callId: offerSignal.callId,
         from: userId,
         to: offerSignal.from,
         answer,
-      });
+      };
+      await send("call-answer", answerPayload);
+
+      // Re-send answer once after 1.5s to ensure delivery
+      setTimeout(() => {
+        if (peerRef.current?.connectionState !== "connected") {
+          void send("call-answer", answerPayload);
+        }
+      }, 1500);
+
       pendingOfferRef.current = null;
       setIncoming(null);
     } catch {
@@ -246,8 +353,20 @@ export function InAppCall({
     });
     channelRef.current = channel;
     channel
-      .on("broadcast", { event: "call-offer" }, ({ payload }: { payload: CallSignal }) => {
+      .on("broadcast", { event: "call-offer" }, async ({ payload }: { payload: CallSignal }) => {
         if (payload.from === userId) return;
+
+        // If caller is sending offer and we are already in this call as answerer, reply with current answer
+        if (active && payload.callId === callIdRef.current && peerRef.current?.localDescription) {
+          await send("call-answer", {
+            callId: payload.callId,
+            from: userId,
+            to: payload.from,
+            answer: peerRef.current.localDescription,
+          });
+          return;
+        }
+
         if (!active) {
           pendingOfferRef.current = payload;
           setIncoming(payload);
@@ -258,7 +377,7 @@ export function InAppCall({
         if (payload.to && payload.to !== userId) return;
         if (payload.callId !== callIdRef.current || !payload.answer) return;
         peerUserIdRef.current = payload.from;
-        if (peerRef.current) {
+        if (peerRef.current && peerRef.current.signalingState !== "stable") {
           await peerRef.current.setRemoteDescription(payload.answer);
           await processQueuedCandidates();
         }
