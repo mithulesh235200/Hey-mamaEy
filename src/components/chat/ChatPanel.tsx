@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 import {
   formatBytes,
   kindForFile,
@@ -33,12 +34,14 @@ export function ChatPanel({
   space,
   messages,
   userId,
+  displayName,
   onForward,
   onOpenSidebar,
 }: {
   space: Space | null;
   messages: Message[];
   userId: string;
+  displayName: string;
   onForward: (m: Message) => void;
   onOpenSidebar: () => void;
 }) {
@@ -47,11 +50,42 @@ export function ChatPanel({
   const [recording, setRecording] = useState(false);
   const [editing, setEditing] = useState<Message | null>(null);
   const [callMode, setCallMode] = useState<"voice" | "video" | null>(null);
+  const [activeMembers, setActiveMembers] = useState<string[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!space) return;
+    const channel = supabase.channel(`presence:${space.code}`);
+    const updateMembers = () => {
+      const state = channel.presenceState<{ name?: string }>();
+      const names = Object.values(state)
+        .flat()
+        .map((entry) => entry.name?.trim())
+        .filter((name): name is string => Boolean(name));
+      setActiveMembers([...new Set(names)]);
+    };
+
+    channel
+      .on("presence", { event: "sync" }, updateMembers)
+      .on("presence", { event: "join" }, updateMembers)
+      .on("presence", { event: "leave" }, updateMembers)
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await channel.track({ userId, name: displayName.trim() || "Anonymous" });
+          updateMembers();
+        }
+      });
+
+    return () => {
+      void channel.untrack();
+      void channel.unsubscribe();
+      setActiveMembers([]);
+    };
+  }, [displayName, space, userId]);
 
   const shareSpace = async () => {
     const url = `${window.location.origin}${window.location.pathname}?space=${encodeURIComponent(space?.code ?? "")}`;
@@ -208,6 +242,11 @@ export function ChatPanel({
           <h2 className="truncate text-sm font-semibold">{space.name}</h2>
           <p className="text-[11px] text-muted-foreground">
             Space Code <span className="font-mono text-primary">{space.code}</span>
+          </p>
+          <p className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+            <span className="size-1.5 rounded-full bg-primary" />
+            {activeMembers.length} active
+            {activeMembers.length > 0 && <span aria-label="Active members">· {activeMembers.join(", ")}</span>}
           </p>
         </div>
         <button

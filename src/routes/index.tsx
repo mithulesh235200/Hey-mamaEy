@@ -65,6 +65,7 @@ function Index() {
       <div className="hidden w-80 shrink-0 md:block">
         <Sidebar
           userId={state.userId}
+          displayName={state.displayName}
           spaces={state.spaces}
           activeSpaceId={state.activeSpaceId}
           messages={state.messages}
@@ -76,6 +77,7 @@ function Index() {
           <div className="h-full w-80 max-w-[85%]" onClick={(e) => e.stopPropagation()}>
             <Sidebar
               userId={state.userId}
+              displayName={state.displayName}
               spaces={state.spaces}
               activeSpaceId={state.activeSpaceId}
               messages={state.messages}
@@ -90,6 +92,7 @@ function Index() {
         space={activeSpace}
         messages={activeMessages}
         userId={state.userId}
+        displayName={state.displayName}
         onForward={setForwarding}
         onOpenSidebar={() => setMobileOpen(true)}
       />

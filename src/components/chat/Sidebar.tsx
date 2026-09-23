@@ -6,6 +6,7 @@ import {
   joinSpace,
   leaveSpace,
   regenerateId,
+  setDisplayName,
   setActiveSpace,
   signInWithId,
   type Message,
@@ -23,12 +24,14 @@ const THEMES: { id: Theme; label: string; icon: string }[] = [
 
 export function Sidebar({
   userId,
+  displayName,
   spaces,
   activeSpaceId,
   messages,
   onNavigate,
 }: {
   userId: string;
+  displayName: string;
   spaces: Space[];
   activeSpaceId: string | null;
   messages: Message[];
@@ -63,6 +66,10 @@ export function Sidebar({
   };
 
   const handleCreate = async () => {
+    if (!displayName.trim() || displayName === "You") {
+      toast.error("Add your name first", { description: "Your name is shown in the Space." });
+      return;
+    }
     try {
       const space = await createSpace(newName || `Space of ${userId.slice(0, 9)}`);
       if (!space) return;
@@ -81,6 +88,10 @@ export function Sidebar({
   };
 
   const handleJoin = async () => {
+    if (!displayName.trim() || displayName === "You") {
+      toast.error("Add your name first", { description: "Your name is shown in the Space." });
+      return;
+    }
     const space = await joinSpace(joinCode);
     if (!space) {
       toast.error("No Space found with that number", {
@@ -148,6 +159,17 @@ export function Sidebar({
         </div>
 
         <div className="mt-3 rounded-xl bg-card p-3 glow-ring">
+          <label htmlFor="display-name" className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Your name
+          </label>
+          <input
+            id="display-name"
+            value={displayName === "You" ? "" : displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            placeholder="Name shown in Spaces"
+            maxLength={40}
+            className="mt-1 w-full rounded-lg bg-background px-2.5 py-2 text-sm outline-none ring-1 ring-input focus:ring-primary"
+          />
           <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Your ID</p>
           <p className="mt-1 font-mono text-sm font-semibold text-primary">{userId}</p>
           <div className="mt-2 flex gap-2">
