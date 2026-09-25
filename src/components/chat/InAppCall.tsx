@@ -13,8 +13,10 @@ type CallSignal = {
   candidate?: RTCIceCandidateInit | undefined;
 };
 
+// High-Availability STUN & TURN Relay Servers for Long-Range 4G/5G, Symmetric NAT & Carrier Networks
 const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
+    // Standard STUN Servers
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
@@ -22,18 +24,23 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: "stun:stun4.l.google.com:19302" },
     { urls: "stun:stun.services.mozilla.com" },
     { urls: "stun:global.stun.twilio.com:3478" },
-    // TURN Relay Fallbacks for mobile NAT & restrictive firewalls
+    { urls: "stun:stun.cloudflare.com:3478" },
+    // Multi-port TCP & UDP TURN Relays (OpenRelay / Metered Relay fallback for restrictive firewalls & 4G/5G)
     {
       urls: [
         "turn:openrelay.metered.ca:80",
         "turn:openrelay.metered.ca:443",
         "turn:openrelay.metered.ca:443?transport=tcp",
+        "turn:openrelay.metered.ca:3478",
+        "turn:openrelay.metered.ca:3478?transport=tcp",
       ],
       username: "openrelay",
       credential: "openrelay",
     },
   ],
   iceTransportPolicy: "all",
+  bundlePolicy: "max-bundle",
+  rtcpMuxPolicy: "require",
   iceCandidatePoolSize: 10,
 };
 
@@ -74,7 +81,7 @@ function startRingtone(): () => void {
         osc1.stop(ctx.currentTime + 1.2);
         osc2.stop(ctx.currentTime + 1.2);
       } catch {
-        /* ignore audio play error */
+        /* ignore audio error */
       }
     };
 
@@ -103,6 +110,7 @@ export function InAppCall({
   onClose: () => void;
 }) {
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const channelSubscribedRef = useRef(false);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
@@ -113,7 +121,6 @@ export function InAppCall({
   const offerRetryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const localOfferRef = useRef<RTCSessionDescriptionInit | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -145,7 +152,13 @@ export function InAppCall({
   };
 
   const send = async (event: string, payload: CallSignal) => {
-    await channelRef.current?.send({ type: "broadcast", event, payload });
+    if (!channelRef.current || !channelSubscribedRef.current) return false;
+    try {
+      await channelRef.current.send({ type: "broadcast", event, payload });
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   const closePeer = () => {
@@ -163,7 +176,6 @@ export function InAppCall({
     }
     remoteStreamRef.current = null;
     iceCandidatesQueueRef.current = [];
-    localOfferRef.current = null;
 
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
@@ -208,11 +220,37 @@ export function InAppCall({
     }
   };
 
+  const getUserMediaWithFallback = async (requestedCallMode: CallMode) => {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video:
+          requestedCallMode === "video"
+            ? {
+                width: { ideal: 1280, max: 1920 },
+                height: { ideal: 720, max: 1080 },
+                facingMode: "user",
+              }
+            : false,
+      });
+    } catch {
+      if (requestedCallMode === "video") {
+        // Fall back to voice if video permissions fail
+        return await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          video: false,
+        });
+      }
+      throw new Error("Microphone or camera permission denied.");
+    }
+  };
+
   const createPeer = async (callId: string, callMode: CallMode, remoteUserId?: string) => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: callMode === "video",
-    });
+    const stream = await getUserMediaWithFallback(callMode);
     const peer = new RTCPeerConnection(ICE_SERVERS);
     stream.getTracks().forEach((track) => peer.addTrack(track, stream));
 
@@ -287,23 +325,42 @@ export function InAppCall({
     return peer;
   };
 
+  const waitForChannelSubscription = async (): Promise<boolean> => {
+    let elapsed = 0;
+    while (!channelSubscribedRef.current && elapsed < 5000) {
+      await new Promise((res) => setTimeout(res, 200));
+      elapsed += 200;
+    }
+    return channelSubscribedRef.current;
+  };
+
   const startCall = async (callMode: CallMode) => {
-    if (active || !channelRef.current) return;
+    if (active) return;
     setError("");
+
+    const isSubscribed = await waitForChannelSubscription();
+    if (!isSubscribed) {
+      setError("Network connecting — please wait a moment and tap call again.");
+      return;
+    }
+
     const callId = crypto.randomUUID();
     try {
       const peer = await createPeer(callId, callMode);
-      const offer = await peer.createOffer();
+      const offer = await peer.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: callMode === "video",
+      });
       await peer.setLocalDescription(offer);
-      localOfferRef.current = offer;
 
       const payload: CallSignal = { callId, from: userId, mode: callMode, offer };
       await send("call-offer", payload);
 
+      // Re-transmit offer every 1.5s to ensure reception by long-range devices
       let attempts = 0;
       offerRetryTimerRef.current = setInterval(() => {
         attempts++;
-        if (peerRef.current?.connectionState === "connected" || attempts > 12) {
+        if (peerRef.current?.connectionState === "connected" || attempts > 20) {
           if (offerRetryTimerRef.current) {
             clearInterval(offerRetryTimerRef.current);
             offerRetryTimerRef.current = null;
@@ -311,17 +368,17 @@ export function InAppCall({
           return;
         }
         void send("call-offer", payload);
-      }, 2500);
+      }, 1500);
 
       connectionTimeoutRef.current = setTimeout(() => {
         if (peerRef.current?.connectionState !== "connected") {
           closePeer();
-          setError("Connection timed out. Receiver did not answer or network blocked.");
+          setError("Call unanswered or connection blocked by firewall.");
         }
       }, 35000);
-    } catch {
+    } catch (err) {
       closePeer();
-      setError("Camera or microphone permission is required for calls.");
+      setError(err instanceof Error ? err.message : "Camera or microphone permission required.");
     }
   };
 
@@ -345,17 +402,23 @@ export function InAppCall({
       };
       await send("call-answer", answerPayload);
 
+      // Re-send answer twice to guarantee delivery
       setTimeout(() => {
         if (peerRef.current?.connectionState !== "connected") {
           void send("call-answer", answerPayload);
         }
-      }, 1500);
+      }, 1000);
+      setTimeout(() => {
+        if (peerRef.current?.connectionState !== "connected") {
+          void send("call-answer", answerPayload);
+        }
+      }, 2500);
 
       pendingOfferRef.current = null;
       setIncoming(null);
-    } catch {
+    } catch (err) {
       closePeer();
-      setError("Camera or microphone permission is required for calls.");
+      setError(err instanceof Error ? err.message : "Camera or microphone permission required.");
     }
   };
 
@@ -369,14 +432,17 @@ export function InAppCall({
   };
 
   useEffect(() => {
+    channelSubscribedRef.current = false;
     const channel = supabase.channel(`in-app-call:${spaceCode}`, {
       config: { broadcast: { self: false } },
     });
     channelRef.current = channel;
+
     channel
       .on("broadcast", { event: "call-offer" }, async ({ payload }: { payload: CallSignal }) => {
         if (payload.from === userId) return;
 
+        // If we are already in this call as the answerer, reply with our current answer
         if (active && payload.callId === callIdRef.current && peerRef.current?.localDescription) {
           await send("call-answer", {
             callId: payload.callId,
@@ -425,9 +491,14 @@ export function InAppCall({
           onClose();
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          channelSubscribedRef.current = true;
+        }
+      });
 
     return () => {
+      channelSubscribedRef.current = false;
       channel.unsubscribe();
       channelRef.current = null;
       closePeer();
@@ -512,7 +583,7 @@ export function InAppCall({
         await stopScreenShare();
       }
     } catch {
-      /* user cancelled screen share picker */
+      /* user cancelled picker */
     }
   };
 
@@ -544,7 +615,6 @@ export function InAppCall({
 
   return (
     <>
-      {/* Invisible dedicated audio element to guarantee voice output on mobile & desktop browsers */}
       <audio ref={remoteAudioRef} autoPlay playsInline hidden />
 
       {incoming && !active && (
