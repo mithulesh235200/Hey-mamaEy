@@ -24,6 +24,8 @@ import {
   VolumeX,
   Sparkles,
   Sliders,
+  FolderOpen,
+  FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -76,6 +78,9 @@ function playChime(type: "send" | "receive", muted: boolean) {
 
 type WallpaperStyle = "default" | "dots" | "grid" | "cosmic";
 type PhotoFilter = "none" | "grayscale" | "sepia" | "vintage" | "neon";
+type MediaTab = "all" | "image" | "video" | "audio" | "file";
+
+const QUICK_EMOJIS = ["🔥", "👍", "❤️", "🎉", "😂", "💯", "🚀", "👏"];
 
 export function ChatPanel({
   space,
@@ -106,6 +111,8 @@ export function ChatPanel({
     return (localStorage.getItem("heymamaey.wallpaper") as WallpaperStyle) || "default";
   });
   const [showWallpaperMenu, setShowWallpaperMenu] = useState(false);
+  const [showGalleryModal, setShowGalleryModal] = useState(false);
+  const [activeMediaTab, setActiveMediaTab] = useState<MediaTab>("all");
 
   const [starredIds, setStarredIds] = useState<Set<string>>(() => {
     try {
@@ -339,6 +346,12 @@ export function ChatPanel({
     );
   });
 
+  const mediaMessages = messages.filter((m) => m.dataUrl && m.kind !== "text");
+  const filteredGallery = mediaMessages.filter((m) => {
+    if (activeMediaTab === "all") return true;
+    return m.kind === activeMediaTab;
+  });
+
   const starredMessagesList = messages.filter((m) => starredIds.has(m.id));
 
   const push = async (
@@ -520,6 +533,15 @@ export function ChatPanel({
 
           <button
             type="button"
+            onClick={() => setShowGalleryModal(true)}
+            title="Space Media Gallery"
+            className="rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors"
+          >
+            <FolderOpen className="size-4" />
+          </button>
+
+          <button
+            type="button"
             onClick={() => setMutedSound((v) => !v)}
             title={mutedSound ? "Unmute sounds" : "Mute sounds"}
             className="rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors"
@@ -695,6 +717,19 @@ export function ChatPanel({
       </div>
 
       <footer className="border-t border-border bg-sidebar p-3">
+        <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-1">
+          {QUICK_EMOJIS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              onClick={() => setText((t) => t + emoji)}
+              className="flex size-7 shrink-0 items-center justify-center rounded-full bg-card text-sm transition-transform hover:scale-125 hover:bg-secondary"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+
         {typingArray.length > 0 && (
           <div className="mb-2 flex items-center gap-2 px-1 text-xs text-muted-foreground italic animate-pulse">
             <span className="size-2 rounded-full bg-primary animate-ping" />
@@ -805,6 +840,91 @@ export function ChatPanel({
           }}
         />
       </footer>
+
+      {/* Media Gallery Modal */}
+      {showGalleryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-2xl rounded-2xl bg-card border border-border p-5 shadow-2xl flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <FolderOpen className="size-5 text-primary" />
+                <h3 className="font-bold text-sm">Space Media Gallery ({filteredGallery.length})</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowGalleryModal(false)}
+                className="rounded-full p-1 text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <div className="flex gap-1 border-b border-border py-2 text-xs">
+              {(["all", "image", "video", "audio", "file"] as MediaTab[]).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveMediaTab(tab)}
+                  className={
+                    "rounded-lg px-3 py-1.5 capitalize font-medium transition-colors " +
+                    (activeMediaTab === tab ? "bg-primary text-primary-foreground font-bold" : "text-muted-foreground hover:bg-secondary")
+                  }
+                >
+                  {tab === "all" ? "All Media" : tab + "s"}
+                </button>
+              ))}
+            </div>
+
+            <div className="thin-scroll flex-1 overflow-y-auto my-3 p-1">
+              {filteredGallery.length === 0 ? (
+                <p className="py-12 text-center text-xs text-muted-foreground">
+                  No attachments found in this category.
+                </p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {filteredGallery.map((m) => (
+                    <div key={m.id} className="relative group rounded-xl border border-border bg-background p-2 flex flex-col justify-between">
+                      {m.kind === "image" && (
+                        <img
+                          src={m.dataUrl}
+                          alt={m.fileName || "Shared photo"}
+                          onClick={() => setLightbox(m.dataUrl!)}
+                          className="h-28 w-full object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
+                        />
+                      )}
+                      {m.kind === "video" && (
+                        <video src={m.dataUrl} controls className="h-28 w-full object-cover rounded-lg bg-black" />
+                      )}
+                      {m.kind === "audio" && (
+                        <div className="p-3 flex flex-col items-center justify-center gap-2 bg-secondary/50 rounded-lg h-28 text-center">
+                          <AudioLines className="size-8 text-primary" />
+                          <span className="text-[10px] font-semibold truncate w-full">{m.fileName || "Voice Note"}</span>
+                        </div>
+                      )}
+                      {m.kind === "file" && (
+                        <div className="p-3 flex flex-col items-center justify-center gap-2 bg-secondary/50 rounded-lg h-28 text-center">
+                          <FileText className="size-8 text-primary" />
+                          <span className="text-[10px] font-semibold truncate w-full">{m.fileName || "Document"}</span>
+                        </div>
+                      )}
+                      <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
+                        <span className="truncate">{m.authorName}</span>
+                        <a
+                          href={m.dataUrl}
+                          download={m.fileName || `heymama-${m.kind}-${Date.now()}`}
+                          className="flex items-center gap-1 text-primary hover:underline font-semibold"
+                        >
+                          <Download className="size-3" /> Save
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Starred Messages Modal */}
       {showStarredModal && (
