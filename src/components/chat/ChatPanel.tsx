@@ -20,6 +20,9 @@ import {
   QrCode,
   Copy,
   Check,
+  Volume2,
+  VolumeX,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -38,6 +41,39 @@ import { MessageBubble } from "./MessageBubble";
 import { InAppCall } from "./InAppCall";
 
 const MAX_BYTES = 50 * 1024 * 1024; // 50 MB limit
+
+function playChime(type: "send" | "receive", muted: boolean) {
+  if (muted) return;
+  try {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    if (type === "send") {
+      osc.frequency.setValueAtTime(440, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.08, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.15);
+    } else {
+      osc.frequency.setValueAtTime(660, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(520, ctx.currentTime + 0.18);
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.2);
+    }
+  } catch {
+    // ignore audio autoplay restriction
+  }
+}
+
+type WallpaperStyle = "default" | "dots" | "grid" | "cosmic";
 
 export function ChatPanel({
   space,
@@ -59,8 +95,15 @@ export function ChatPanel({
   const [showSearch, setShowSearch] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
+  const [recordSecs, setRecordSecs] = useState(0);
   const [editing, setEditing] = useState<Message | null>(null);
   const [pinnedMessage, setPinnedMessage] = useState<Message | null>(null);
+  const [mutedSound, setMutedSound] = useState(false);
+  const [wallpaper, setWallpaper] = useState<WallpaperStyle>(() => {
+    return (localStorage.getItem("heymamaey.wallpaper") as WallpaperStyle) || "default";
+  });
+  const [showWallpaperMenu, setShowWallpaperMenu] = useState(false);
+
   const [starredIds, setStarredIds] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem("heymamaey.starred");
@@ -85,11 +128,30 @@ export function ChatPanel({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presenceChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const lastMsgCountRef = useRef(messages.length);
+
+  useEffect(() => {
+    if (messages.length > lastMsgCountRef.current) {
+      const last = messages[messages.length - 1];
+      if (last && last.authorId !== userId) {
+        playChime("receive", mutedSound);
+      }
+    }
+    lastMsgCountRef.current = messages.length;
+  }, [messages, userId, mutedSound]);
+
+  const changeWallpaper = (w: WallpaperStyle) => {
+    setWallpaper(w);
+    localStorage.setItem("heymamaey.wallpaper", w);
+    setShowWallpaperMenu(false);
+    toast.success(`Wallpaper changed to ${w}`);
+  };
 
   useEffect(() => {
     try {
@@ -275,7 +337,11 @@ export function ChatPanel({
     extra: Partial<Omit<Message, "id" | "createdAt" | "authorId" | "authorName">>,
   ) => {
     const ok = await sendMessage({ spaceId: space.id, kind, ...extra });
-    if (!ok) toast.error("Message failed to send — check your connection");
+    if (ok) {
+      playChime("send", mutedSound);
+    } else {
+      toast.error("Message failed to send — check your connection");
+    }
   };
 
   const submitText = async () => {
@@ -302,6 +368,7 @@ export function ChatPanel({
     const ok = await sendMessage({ spaceId: space.id, kind: "text", text: value });
     if (ok) {
       setText("");
+      playChime("send", mutedSound);
     } else {
       toast.error("Message failed to send — check your connection");
     }
@@ -325,6 +392,7 @@ export function ChatPanel({
       setShowPollModal(false);
       setPollQuestion("");
       setPollOptions(["", ""]);
+      playChime("send", mutedSound);
     } else {
       toast.error("Couldn't create poll");
     }
@@ -356,6 +424,7 @@ export function ChatPanel({
   const toggleRecording = async () => {
     if (recording) {
       recorderRef.current?.stop();
+      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
       setRecording(false);
       return;
     }
@@ -384,6 +453,10 @@ export function ChatPanel({
       recorder.start();
       recorderRef.current = recorder;
       setRecording(true);
+      setRecordSecs(0);
+      recordTimerRef.current = setInterval(() => {
+        setRecordSecs((s) => s + 1);
+      }, 1000);
     } catch {
       audioInputRef.current?.click();
     }
@@ -391,8 +464,21 @@ export function ChatPanel({
 
   const typingArray = Array.from(typingUsers);
 
+  const getWallpaperStyle = () => {
+    if (wallpaper === "dots") {
+      return { backgroundImage: "radial-gradient(var(--border) 1px, transparent 1px)", backgroundSize: "16px 16px" };
+    }
+    if (wallpaper === "grid") {
+      return { backgroundImage: "linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px)", backgroundSize: "24px 24px" };
+    }
+    if (wallpaper === "cosmic") {
+      return { backgroundImage: "radial-gradient(circle at 50% 50%, var(--primary) 0%, transparent 70%)", opacity: 0.15 };
+    }
+    return {};
+  };
+
   return (
-    <section className="chat-canvas flex h-full min-w-0 flex-1 flex-col">
+    <section className="chat-canvas flex h-full min-w-0 flex-1 flex-col" style={getWallpaperStyle()}>
       <header className="flex flex-col border-b border-border bg-sidebar px-4 py-3">
         <div className="flex items-center gap-3">
           <button
@@ -413,6 +499,44 @@ export function ChatPanel({
               {activeMembers.length} active
               {activeMembers.length > 0 && <span aria-label="Active members">· {activeMembers.join(", ")}</span>}
             </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setMutedSound((v) => !v)}
+            title={mutedSound ? "Unmute sounds" : "Mute sounds"}
+            className="rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors"
+          >
+            {mutedSound ? <VolumeX className="size-4 text-destructive" /> : <Volume2 className="size-4 text-primary" />}
+          </button>
+
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowWallpaperMenu((v) => !v)}
+              title="Chat Wallpaper"
+              className="rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors"
+            >
+              <Sparkles className="size-4" />
+            </button>
+            {showWallpaperMenu && (
+              <div className="absolute right-0 top-10 z-40 w-36 rounded-xl border border-border bg-card p-1.5 shadow-2xl animate-in zoom-in-95 duration-150">
+                {(["default", "dots", "grid", "cosmic"] as WallpaperStyle[]).map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    onClick={() => changeWallpaper(w)}
+                    className={
+                      "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs capitalize transition-colors " +
+                      (wallpaper === w ? "bg-primary text-primary-foreground font-semibold" : "hover:bg-secondary text-muted-foreground")
+                    }
+                  >
+                    <span>{w}</span>
+                    {wallpaper === w && <Check className="size-3" />}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <button
@@ -562,6 +686,16 @@ export function ChatPanel({
           </div>
         )}
 
+        {recording && (
+          <div className="mb-2 flex items-center gap-3 rounded-xl bg-destructive/15 border border-destructive/30 px-3 py-2 text-xs text-destructive animate-pulse">
+            <span className="size-2.5 rounded-full bg-destructive animate-ping" />
+            <span className="font-semibold">Recording Voice Note...</span>
+            <span className="font-mono font-bold">
+              {Math.floor(recordSecs / 60)}:{String(recordSecs % 60).padStart(2, "0")}
+            </span>
+          </div>
+        )}
+
         {editing && (
           <div className="mb-2 flex items-center justify-between rounded-lg bg-secondary px-3 py-2 text-xs text-muted-foreground">
             <span>Editing message</span>
@@ -608,7 +742,7 @@ export function ChatPanel({
           <IconBtn
             label={recording ? "Stop recording" : "Record voice note"}
             onClick={toggleRecording}
-            className={recording ? "bg-destructive text-foreground" : ""}
+            className={recording ? "bg-destructive text-foreground animate-bounce" : ""}
           >
             {recording ? <Square className="size-4" /> : <Mic className="size-4" />}
           </IconBtn>
