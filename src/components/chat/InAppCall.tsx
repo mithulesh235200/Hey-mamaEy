@@ -22,7 +22,7 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: "stun:stun4.l.google.com:19302" },
     { urls: "stun:stun.services.mozilla.com" },
     { urls: "stun:global.stun.twilio.com:3478" },
-    // TURN Relay Fallbacks (OpenRelay TCP/UDP relay for symmetric NATs / mobile 4G/5G data)
+    // TURN Relay Fallbacks for mobile NAT & restrictive firewalls
     {
       urls: [
         "turn:openrelay.metered.ca:80",
@@ -45,30 +45,37 @@ function startRingtone(): () => void {
       (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextClass) return () => {};
     const ctx = new AudioContextClass();
+    if (ctx.state === "suspended") {
+      void ctx.resume().catch(() => {});
+    }
     let playing = true;
 
     const chime = () => {
-      if (!playing) return;
-      const osc1 = ctx.createOscillator();
-      const osc2 = ctx.createOscillator();
-      const gain = ctx.createGain();
+      if (!playing || ctx.state === "closed") return;
+      try {
+        const osc1 = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain = ctx.createGain();
 
-      osc1.type = "sine";
-      osc2.type = "sine";
-      osc1.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
-      osc2.frequency.setValueAtTime(659.25, ctx.currentTime); // E5
+        osc1.type = "sine";
+        osc2.type = "sine";
+        osc1.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
+        osc2.frequency.setValueAtTime(659.25, ctx.currentTime); // E5
 
-      gain.gain.setValueAtTime(0.08, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1.2);
+        gain.gain.setValueAtTime(0.08, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1.2);
 
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(ctx.destination);
+        osc1.connect(gain);
+        osc2.connect(gain);
+        gain.connect(ctx.destination);
 
-      osc1.start();
-      osc2.start();
-      osc1.stop(ctx.currentTime + 1.2);
-      osc2.stop(ctx.currentTime + 1.2);
+        osc1.start();
+        osc2.start();
+        osc1.stop(ctx.currentTime + 1.2);
+        osc2.stop(ctx.currentTime + 1.2);
+      } catch {
+        /* ignore audio play error */
+      }
     };
 
     chime();
@@ -108,6 +115,7 @@ export function InAppCall({
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const localOfferRef = useRef<RTCSessionDescriptionInit | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const screenTrackRef = useRef<MediaStreamTrack | null>(null);
 
@@ -148,16 +156,24 @@ export function InAppCall({
     }
     peerRef.current?.close();
     peerRef.current = null;
-    localStreamRef.current?.getTracks().forEach((track) => track.stop());
-    localStreamRef.current = null;
+
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+    }
     remoteStreamRef.current = null;
     iceCandidatesQueueRef.current = [];
     localOfferRef.current = null;
+
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
+
     setConnected(false);
     setActive(false);
     setSharingScreen(false);
+    setMuted(false);
+    setCameraOff(false);
     setIncoming(null);
     callIdRef.current = null;
     peerUserIdRef.current = null;
@@ -171,10 +187,24 @@ export function InAppCall({
     iceCandidatesQueueRef.current = [];
     for (const candidate of queue) {
       try {
-        await peer.addIceCandidate(candidate);
+        if (candidate && candidate.candidate) {
+          await peer.addIceCandidate(candidate);
+        }
       } catch {
         /* ignore invalid candidate */
       }
+    }
+  };
+
+  const attachRemoteStream = (stream: MediaStream) => {
+    remoteStreamRef.current = stream;
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = stream;
+      remoteAudioRef.current.play().catch(() => {});
+    }
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = stream;
+      remoteVideoRef.current.play().catch(() => {});
     }
   };
 
@@ -188,11 +218,7 @@ export function InAppCall({
 
     peer.ontrack = (event) => {
       const remoteStream = event.streams[0] ?? new MediaStream([event.track]);
-      remoteStreamRef.current = remoteStream;
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = remoteStream;
-        remoteVideoRef.current.play().catch(() => {});
-      }
+      attachRemoteStream(remoteStream);
     };
 
     peer.onicecandidate = (event) => {
@@ -219,7 +245,6 @@ export function InAppCall({
           connectionTimeoutRef.current = null;
         }
       } else if (state === "disconnected") {
-        // Do NOT close immediately! Allow 15s grace period for reconnection or ICE pair switch.
         if (!disconnectTimerRef.current) {
           disconnectTimerRef.current = setTimeout(() => {
             if (peer.connectionState !== "connected") {
@@ -229,7 +254,6 @@ export function InAppCall({
           }, 15000);
         }
       } else if (state === "failed") {
-        // Attempt ICE restart before giving up
         try {
           if (typeof peer.restartIce === "function") {
             peer.restartIce();
@@ -276,7 +300,6 @@ export function InAppCall({
       const payload: CallSignal = { callId, from: userId, mode: callMode, offer };
       await send("call-offer", payload);
 
-      // Re-transmit offer every 2.5s until answered or connected (up to 30 seconds)
       let attempts = 0;
       offerRetryTimerRef.current = setInterval(() => {
         attempts++;
@@ -290,7 +313,6 @@ export function InAppCall({
         void send("call-offer", payload);
       }, 2500);
 
-      // 35-second overall connection timeout
       connectionTimeoutRef.current = setTimeout(() => {
         if (peerRef.current?.connectionState !== "connected") {
           closePeer();
@@ -323,7 +345,6 @@ export function InAppCall({
       };
       await send("call-answer", answerPayload);
 
-      // Re-send answer once after 1.5s to ensure delivery
       setTimeout(() => {
         if (peerRef.current?.connectionState !== "connected") {
           void send("call-answer", answerPayload);
@@ -356,7 +377,6 @@ export function InAppCall({
       .on("broadcast", { event: "call-offer" }, async ({ payload }: { payload: CallSignal }) => {
         if (payload.from === userId) return;
 
-        // If caller is sending offer and we are already in this call as answerer, reply with current answer
         if (active && payload.callId === callIdRef.current && peerRef.current?.localDescription) {
           await send("call-answer", {
             callId: payload.callId,
@@ -434,13 +454,19 @@ export function InAppCall({
   }, [connected]);
 
   useEffect(() => {
+    if (remoteStreamRef.current) {
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+        remoteVideoRef.current.play().catch(() => {});
+      }
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = remoteStreamRef.current;
+        remoteAudioRef.current.play().catch(() => {});
+      }
+    }
     if (localVideoRef.current && localStreamRef.current && !sharingScreen) {
       localVideoRef.current.srcObject = localStreamRef.current;
       localVideoRef.current.play().catch(() => {});
-    }
-    if (remoteVideoRef.current && remoteStreamRef.current) {
-      remoteVideoRef.current.srcObject = remoteStreamRef.current;
-      remoteVideoRef.current.play().catch(() => {});
     }
   }, [active, mode, connected, sharingScreen]);
 
@@ -486,7 +512,7 @@ export function InAppCall({
         await stopScreenShare();
       }
     } catch {
-      /* user cancelled picker */
+      /* user cancelled screen share picker */
     }
   };
 
@@ -518,26 +544,31 @@ export function InAppCall({
 
   return (
     <>
+      {/* Invisible dedicated audio element to guarantee voice output on mobile & desktop browsers */}
+      <audio ref={remoteAudioRef} autoPlay playsInline hidden />
+
       {incoming && !active && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/85 p-6 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/85 p-6 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 text-center shadow-2xl">
-            <div className="mx-auto flex size-14 items-center justify-center rounded-full bg-primary/15 text-primary animate-pulse">
-              {incoming.mode === "voice" ? <Phone className="size-6" /> : <Video className="size-6" />}
+            <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-primary/15 text-primary animate-pulse">
+              {incoming.mode === "voice" ? <Phone className="size-7" /> : <Video className="size-7" />}
             </div>
-            <h2 className="mt-4 text-lg font-semibold">Incoming {incoming.mode ?? "video"} call</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Another person in this Space is calling.</p>
-            <div className="mt-5 flex justify-center gap-2">
+            <h2 className="mt-4 text-lg font-semibold text-foreground">
+              Incoming {incoming.mode ?? "video"} call
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">Someone in this Space is calling you.</p>
+            <div className="mt-6 flex justify-center gap-3">
               <button
                 type="button"
                 onClick={() => void endCall()}
-                className="rounded-xl bg-destructive px-4 py-2 text-sm font-semibold text-destructive-foreground hover:opacity-90 transition-opacity"
+                className="flex-1 rounded-xl bg-destructive px-4 py-2.5 text-sm font-semibold text-destructive-foreground hover:opacity-90 transition-opacity"
               >
                 Decline
               </button>
               <button
                 type="button"
                 onClick={() => void acceptCall()}
-                className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90 transition-opacity"
+                className="flex-1 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:opacity-90 transition-opacity"
               >
                 Answer
               </button>
@@ -545,30 +576,35 @@ export function InAppCall({
           </div>
         </div>
       )}
+
       {active && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-background/95 p-3 sm:p-6">
+        <div className="fixed inset-0 z-50 flex flex-col bg-background/95 p-3 sm:p-6 animate-in fade-in duration-200">
           <header className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-semibold">{mode === "voice" ? "Voice call" : "Video call"}</p>
+              <p className="text-sm font-semibold text-foreground">
+                {mode === "voice" ? "Voice Call" : "Video Call"}
+              </p>
               <p className="text-xs text-muted-foreground font-mono">
-                {connected ? `Connected • ${formatTimer(duration)}` : "Connecting..."}
+                {connected ? `Connected • ${formatTimer(duration)}` : "Ringing / Connecting..."}
               </p>
             </div>
             <button
               type="button"
               onClick={() => void endCall()}
               aria-label="Close call"
-              className="rounded-full bg-card p-2 text-muted-foreground hover:text-foreground"
+              className="rounded-full bg-card p-2 text-muted-foreground hover:text-foreground transition-colors"
             >
-              <X className="size-4" />
+              <X className="size-5" />
             </button>
           </header>
+
           {error && (
-            <p className="mx-auto mt-4 rounded-lg bg-destructive/15 px-3 py-2 text-center text-xs text-destructive-foreground">
+            <p className="mx-auto mt-3 rounded-lg bg-destructive/15 px-4 py-2 text-center text-xs text-destructive-foreground">
               {error}
             </p>
           )}
-          <div className="relative mx-auto mt-4 flex min-h-0 w-full max-w-5xl flex-1 items-center justify-center overflow-hidden rounded-2xl bg-card">
+
+          <div className="relative mx-auto mt-4 flex min-h-0 w-full max-w-5xl flex-1 items-center justify-center overflow-hidden rounded-2xl bg-card border border-border shadow-2xl">
             <video
               ref={remoteVideoRef}
               autoPlay
@@ -576,8 +612,13 @@ export function InAppCall({
               className={mode === "video" ? "h-full w-full object-contain" : "hidden"}
             />
             {mode === "voice" && (
-              <div className="flex size-24 items-center justify-center rounded-full bg-primary/15 text-primary">
-                <Phone className="size-10" />
+              <div className="flex flex-col items-center gap-4">
+                <div className="flex size-28 items-center justify-center rounded-full bg-primary/15 text-primary animate-pulse">
+                  <Phone className="size-12" />
+                </div>
+                <p className="text-xs font-mono text-muted-foreground">
+                  {connected ? "Voice Active" : "Calling..."}
+                </p>
               </div>
             )}
             {mode === "video" && (
@@ -586,22 +627,24 @@ export function InAppCall({
                 autoPlay
                 muted
                 playsInline
-                className="absolute bottom-4 right-4 z-10 h-28 w-40 rounded-xl bg-background object-cover shadow-xl sm:h-36 sm:w-52"
+                className="absolute bottom-4 right-4 z-10 h-28 w-40 rounded-xl bg-background object-cover shadow-2xl border border-border sm:h-36 sm:w-52"
               />
             )}
           </div>
-          <div className="mt-4 flex justify-center gap-2">
+
+          <div className="mt-4 flex justify-center gap-3">
             <button
               type="button"
               onClick={toggleMute}
               aria-label={muted ? "Unmute microphone" : "Mute microphone"}
               className={
-                "flex size-11 items-center justify-center rounded-full bg-card hover:text-primary transition-colors " +
-                (muted ? "text-destructive" : "")
+                "flex size-12 items-center justify-center rounded-full bg-card hover:text-primary transition-colors border border-border " +
+                (muted ? "text-destructive border-destructive/50" : "text-foreground")
               }
             >
-              {muted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+              {muted ? <MicOff className="size-5" /> : <Mic className="size-5" />}
             </button>
+
             {mode === "video" && (
               <>
                 <button
@@ -609,38 +652,40 @@ export function InAppCall({
                   onClick={toggleCamera}
                   aria-label={cameraOff ? "Turn camera on" : "Turn camera off"}
                   className={
-                    "flex size-11 items-center justify-center rounded-full bg-card hover:text-primary transition-colors " +
-                    (cameraOff ? "text-destructive" : "")
+                    "flex size-12 items-center justify-center rounded-full bg-card hover:text-primary transition-colors border border-border " +
+                    (cameraOff ? "text-destructive border-destructive/50" : "text-foreground")
                   }
                 >
-                  {cameraOff ? <VideoOff className="size-4" /> : <Video className="size-4" />}
+                  {cameraOff ? <VideoOff className="size-5" /> : <Video className="size-5" />}
                 </button>
                 <button
                   type="button"
                   onClick={() => void toggleScreenShare()}
                   aria-label={sharingScreen ? "Stop screen share" : "Share screen"}
                   className={
-                    "flex size-11 items-center justify-center rounded-full bg-card hover:text-primary transition-colors " +
-                    (sharingScreen ? "text-primary ring-2 ring-primary" : "")
+                    "flex size-12 items-center justify-center rounded-full bg-card hover:text-primary transition-colors border border-border " +
+                    (sharingScreen ? "text-primary ring-2 ring-primary border-primary" : "text-foreground")
                   }
                 >
-                  {sharingScreen ? <MonitorOff className="size-4" /> : <Monitor className="size-4" />}
+                  {sharingScreen ? <MonitorOff className="size-5" /> : <Monitor className="size-5" />}
                 </button>
               </>
             )}
+
             <button
               type="button"
               onClick={() => void endCall()}
               aria-label="End call"
-              className="flex size-11 items-center justify-center rounded-full bg-destructive text-destructive-foreground hover:opacity-90 transition-opacity"
+              className="flex size-12 items-center justify-center rounded-full bg-destructive text-destructive-foreground hover:opacity-90 transition-opacity shadow-lg"
             >
-              <PhoneOff className="size-4" />
+              <PhoneOff className="size-5" />
             </button>
           </div>
         </div>
       )}
+
       {error && !active && !incoming && (
-        <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-destructive px-4 py-2 text-xs text-destructive-foreground">
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-destructive px-5 py-2.5 text-xs font-semibold text-destructive-foreground shadow-2xl animate-in fade-in duration-200">
           {error}
         </div>
       )}
