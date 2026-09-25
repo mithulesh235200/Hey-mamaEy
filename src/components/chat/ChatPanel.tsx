@@ -26,6 +26,8 @@ import {
   Sliders,
   FolderOpen,
   FileText,
+  FileDown,
+  Clock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -79,6 +81,7 @@ function playChime(type: "send" | "receive", muted: boolean) {
 type WallpaperStyle = "default" | "dots" | "grid" | "cosmic";
 type PhotoFilter = "none" | "grayscale" | "sepia" | "vintage" | "neon";
 type MediaTab = "all" | "image" | "video" | "audio" | "file";
+type DisappearingTimer = "off" | "24h" | "7d" | "30d";
 
 const QUICK_EMOJIS = ["🔥", "👍", "❤️", "🎉", "😂", "💯", "🚀", "👏"];
 
@@ -110,6 +113,10 @@ export function ChatPanel({
   const [wallpaper, setWallpaper] = useState<WallpaperStyle>(() => {
     return (localStorage.getItem("heymamaey.wallpaper") as WallpaperStyle) || "default";
   });
+  const [disappearingTimer, setDisappearingTimer] = useState<DisappearingTimer>(() => {
+    return (localStorage.getItem(`heymamaey.disappearing.${space?.id}`) as DisappearingTimer) || "off";
+  });
+  const [showDisappearingMenu, setShowDisappearingMenu] = useState(false);
   const [showWallpaperMenu, setShowWallpaperMenu] = useState(false);
   const [showGalleryModal, setShowGalleryModal] = useState(false);
   const [activeMediaTab, setActiveMediaTab] = useState<MediaTab>("all");
@@ -161,6 +168,41 @@ export function ChatPanel({
     localStorage.setItem("heymamaey.wallpaper", w);
     setShowWallpaperMenu(false);
     toast.success(`Wallpaper changed to ${w}`);
+  };
+
+  const changeDisappearingTimer = (timer: DisappearingTimer) => {
+    setDisappearingTimer(timer);
+    if (space?.id) {
+      localStorage.setItem(`heymamaey.disappearing.${space.id}`, timer);
+    }
+    setShowDisappearingMenu(false);
+    toast.success(`Disappearing timer set to ${timer === "off" ? "Off" : timer}`);
+  };
+
+  const exportChatHistory = () => {
+    if (messages.length === 0) {
+      toast.error("No chat history to export");
+      return;
+    }
+    let content = `=========================================\nHEY MAMAEY - CHAT EXPORT BACKUP\nSpace: ${space?.name} (Code: ${space?.code})\nExported: ${new Date().toLocaleString()}\n=========================================\n\n`;
+
+    messages.forEach((m) => {
+      const dateStr = new Date(m.createdAt).toLocaleString();
+      const author = m.authorName || m.authorId;
+      const body = m.text ? m.text : `[Attachment: ${m.fileName || m.kind}]`;
+      content += `[${dateStr}] ${author}: ${body}\n`;
+    });
+
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `heymamaey-chat-${space?.code}-${Date.now()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success("Chat history exported!");
   };
 
   useEffect(() => {
@@ -530,6 +572,48 @@ export function ChatPanel({
               {activeMembers.length > 0 && <span aria-label="Active members">· {activeMembers.join(", ")}</span>}
             </p>
           </div>
+
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowDisappearingMenu((v) => !v)}
+              title="Disappearing Messages"
+              className={
+                "rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors " +
+                (disappearingTimer !== "off" ? "text-primary ring-1 ring-primary" : "")
+              }
+            >
+              <Clock className="size-4" />
+            </button>
+            {showDisappearingMenu && (
+              <div className="absolute right-0 top-10 z-40 w-40 rounded-xl border border-border bg-card p-1.5 shadow-2xl animate-in zoom-in-95 duration-150">
+                <div className="px-2 py-1 text-[10px] uppercase font-bold text-muted-foreground">Auto-destruct</div>
+                {(["off", "24h", "7d", "30d"] as DisappearingTimer[]).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => changeDisappearingTimer(t)}
+                    className={
+                      "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors " +
+                      (disappearingTimer === t ? "bg-primary text-primary-foreground font-semibold" : "hover:bg-secondary text-muted-foreground")
+                    }
+                  >
+                    <span>{t === "off" ? "Off (Permanent)" : t}</span>
+                    {disappearingTimer === t && <Check className="size-3" />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={exportChatHistory}
+            title="Export Chat Backup"
+            className="rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors"
+          >
+            <FileDown className="size-4" />
+          </button>
 
           <button
             type="button"
