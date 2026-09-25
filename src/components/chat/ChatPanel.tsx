@@ -617,6 +617,9 @@ export function ChatPanel({
     return "none";
   };
 
+  const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
+  const charCount = text.length;
+
   if (isLocked) {
     return (
       <section className="chat-canvas flex h-full flex-1 flex-col items-center justify-center p-6 text-center">
@@ -927,34 +930,41 @@ export function ChatPanel({
             ))}
           </div>
 
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowSnippetsMenu((v) => !v)}
-              className="inline-flex items-center gap-1 rounded-full bg-card px-2.5 py-1 text-[11px] font-semibold text-primary border border-border hover:bg-secondary transition-colors"
-            >
-              <Zap className="size-3 text-amber-400 fill-amber-400" />
-              <span>Snippets</span>
-            </button>
-
-            {showSnippetsMenu && (
-              <div className="absolute right-0 bottom-8 z-40 w-64 rounded-2xl border border-border bg-card p-2 shadow-2xl animate-in zoom-in-95 duration-150 space-y-1">
-                <div className="px-2 py-1 text-[10px] uppercase font-bold text-muted-foreground">Quick Templates</div>
-                {DRAFT_TEMPLATES.map((tmpl, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => {
-                      setText(tmpl);
-                      setShowSnippetsMenu(false);
-                    }}
-                    className="w-full text-left rounded-xl px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors truncate"
-                  >
-                    {tmpl}
-                  </button>
-                ))}
-              </div>
+          <div className="flex items-center gap-2">
+            {charCount > 0 && (
+              <span className="text-[10px] font-mono text-muted-foreground">
+                {charCount} chars · {wordCount} words
+              </span>
             )}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowSnippetsMenu((v) => !v)}
+                className="inline-flex items-center gap-1 rounded-full bg-card px-2.5 py-1 text-[11px] font-semibold text-primary border border-border hover:bg-secondary transition-colors"
+              >
+                <Zap className="size-3 text-amber-400 fill-amber-400" />
+                <span>Snippets</span>
+              </button>
+
+              {showSnippetsMenu && (
+                <div className="absolute right-0 bottom-8 z-40 w-64 rounded-2xl border border-border bg-card p-2 shadow-2xl animate-in zoom-in-95 duration-150 space-y-1">
+                  <div className="px-2 py-1 text-[10px] uppercase font-bold text-muted-foreground">Quick Templates</div>
+                  {DRAFT_TEMPLATES.map((tmpl, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setText(tmpl);
+                        setShowSnippetsMenu(false);
+                      }}
+                      className="w-full text-left rounded-xl px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors truncate"
+                    >
+                      {tmpl}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
