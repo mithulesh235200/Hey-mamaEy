@@ -8,6 +8,7 @@ import {
   Forward,
   Pin,
   Smile,
+  Star,
   Trash2,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -50,6 +51,8 @@ export function MessageBubble({
   onEdit,
   onDelete,
   onPin,
+  onStar,
+  isStarred,
 }: {
   message: Message;
   mine: boolean;
@@ -58,6 +61,8 @@ export function MessageBubble({
   onEdit: (m: Message) => void;
   onDelete: (m: Message) => void;
   onPin?: (m: Message) => void;
+  onStar?: (m: Message) => void;
+  isStarred?: boolean;
 }) {
   const system = message.authorId === "SYSTEM";
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -255,7 +260,10 @@ export function MessageBubble({
           ) : (
             <div />
           )}
-          <span>{formatTime(message.createdAt)}</span>
+          <div className="flex items-center gap-1">
+            {isStarred && <Star className="size-3 text-amber-400 fill-amber-400" />}
+            <span>{formatTime(message.createdAt)}</span>
+          </div>
         </div>
       </div>
 
@@ -286,6 +294,14 @@ export function MessageBubble({
         >
           <Smile className="size-3.5" />
         </ActionButton>
+        {onStar && (
+          <ActionButton
+            label={isStarred ? "Unstar message" : "Star message"}
+            onClick={() => onStar(message)}
+          >
+            <Star className={"size-3.5 " + (isStarred ? "text-amber-400 fill-amber-400" : "")} />
+          </ActionButton>
+        )}
         {onPin && (
           <ActionButton label="Pin message" onClick={() => onPin(message)}>
             <Pin className="size-3.5" />

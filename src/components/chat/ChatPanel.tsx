@@ -16,6 +16,10 @@ import {
   ArrowDown,
   Pin,
   BarChart2,
+  Star,
+  QrCode,
+  Copy,
+  Check,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -57,6 +61,17 @@ export function ChatPanel({
   const [recording, setRecording] = useState(false);
   const [editing, setEditing] = useState<Message | null>(null);
   const [pinnedMessage, setPinnedMessage] = useState<Message | null>(null);
+  const [starredIds, setStarredIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem("heymamaey.starred");
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+  const [showStarredModal, setShowStarredModal] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [copiedInvite, setCopiedInvite] = useState(false);
   const [callMode, setCallMode] = useState<"voice" | "video" | null>(null);
   const [activeMembers, setActiveMembers] = useState<string[]>([]);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
@@ -75,6 +90,28 @@ export function ChatPanel({
   const audioInputRef = useRef<HTMLInputElement>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presenceChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("heymamaey.starred", JSON.stringify(Array.from(starredIds)));
+    } catch {
+      // ignore localstorage errors
+    }
+  }, [starredIds]);
+
+  const toggleStar = (m: Message) => {
+    setStarredIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(m.id)) {
+        next.delete(m.id);
+        toast.info("Message unstarred");
+      } else {
+        next.add(m.id);
+        toast.success("Message starred");
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!space) return;
@@ -174,23 +211,19 @@ export function ChatPanel({
   };
 
   const shareSpace = async () => {
-    const url = `${window.location.origin}${window.location.pathname}?space=${encodeURIComponent(space?.code ?? "")}`;
-    const shareData = {
-      title: `${space?.name ?? "Hey Mama"} invite`,
-      text: `Join ${space?.name ?? "this Space"} on HeyMamaEy`,
-      url,
-    };
+    setShowQrModal(true);
+  };
 
+  const inviteUrl = `${window.location.origin}${window.location.pathname}?space=${encodeURIComponent(space?.code ?? "")}`;
+
+  const copyInviteLink = async () => {
     try {
-      if (navigator.share) {
-        await navigator.share(shareData);
-        return;
-      }
-      await navigator.clipboard.writeText(url);
-      toast.success("Invite link copied", { description: url });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      toast.error("Couldn’t share the invite link");
+      await navigator.clipboard.writeText(inviteUrl);
+      setCopiedInvite(true);
+      toast.success("Invite link copied!");
+      setTimeout(() => setCopiedInvite(false), 2000);
+    } catch {
+      toast.error("Couldn't copy invite link");
     }
   };
 
@@ -234,6 +267,8 @@ export function ChatPanel({
       m.fileName?.toLowerCase().includes(q)
     );
   });
+
+  const starredMessagesList = messages.filter((m) => starredIds.has(m.id));
 
   const push = async (
     kind: MediaKind,
@@ -379,6 +414,21 @@ export function ChatPanel({
               {activeMembers.length > 0 && <span aria-label="Active members">· {activeMembers.join(", ")}</span>}
             </p>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setShowStarredModal(true)}
+            title="Starred Messages"
+            className="relative rounded-lg bg-card p-2 text-muted-foreground hover:text-amber-400 transition-colors"
+          >
+            <Star className="size-4" />
+            {starredIds.size > 0 && (
+              <span className="absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-amber-500 font-mono text-[9px] font-bold text-black shadow-sm">
+                {starredIds.size}
+              </span>
+            )}
+          </button>
+
           <button
             type="button"
             onClick={() => setShowSearch((v) => !v)}
@@ -473,6 +523,8 @@ export function ChatPanel({
               setPinnedMessage(message);
               toast.success("Message pinned to top");
             }}
+            onStar={toggleStar}
+            isStarred={starredIds.has(m.id)}
             onEdit={(message) => {
               setEditing(message);
               setText(message.text ?? "");
@@ -601,6 +653,141 @@ export function ChatPanel({
           }}
         />
       </footer>
+
+      {/* Starred Messages Modal */}
+      {showStarredModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-lg rounded-2xl bg-card border border-border p-5 shadow-2xl flex flex-col max-h-[80vh]">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <Star className="size-5 text-amber-400 fill-amber-400" />
+                <h3 className="font-bold text-sm">Starred Messages ({starredMessagesList.length})</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowStarredModal(false)}
+                className="rounded-full p-1 text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <div className="thin-scroll flex-1 overflow-y-auto my-3 space-y-3 pr-1">
+              {starredMessagesList.length === 0 ? (
+                <p className="py-10 text-center text-xs text-muted-foreground">
+                  No starred messages yet. Hover over any message and click the Star icon to bookmark it!
+                </p>
+              ) : (
+                starredMessagesList.map((m) => (
+                  <MessageBubble
+                    key={m.id}
+                    message={m}
+                    mine={m.authorId === userId}
+                    onForward={onForward}
+                    onOpenImage={setLightbox}
+                    onStar={toggleStar}
+                    isStarred={true}
+                    onEdit={(message) => {
+                      setShowStarredModal(false);
+                      setEditing(message);
+                      setText(message.text ?? "");
+                    }}
+                    onDelete={async (message) => {
+                      if (!window.confirm("Delete this message?")) return;
+                      const deleted = await deleteMessage(message.id, message.spaceId);
+                      toast[deleted ? "success" : "error"](
+                        deleted ? "Message deleted" : "Message could not be deleted",
+                      );
+                    }}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Space QR Invite Modal */}
+      {showQrModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-sm rounded-3xl bg-card border border-border p-6 shadow-2xl flex flex-col items-center text-center space-y-4">
+            <div className="flex w-full items-center justify-between border-b border-border pb-2">
+              <div className="flex items-center gap-2">
+                <QrCode className="size-5 text-primary" />
+                <h3 className="font-bold text-sm">Space QR Invite</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowQrModal(false)}
+                className="rounded-full p-1 text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <div className="flex flex-col items-center p-4 bg-white rounded-2xl shadow-inner border border-border">
+              {/* Elegant SVG QR Code visual */}
+              <svg className="size-40 text-slate-900" viewBox="0 0 100 100" fill="currentColor">
+                <rect width="100" height="100" fill="white" />
+                {/* QR Positioning Squares */}
+                <rect x="5" y="5" width="25" height="25" rx="4" />
+                <rect x="10" y="10" width="15" height="15" fill="white" />
+                <rect x="13" y="13" width="9" height="9" />
+
+                <rect x="70" y="5" width="25" height="25" rx="4" />
+                <rect x="75" y="10" width="15" height="15" fill="white" />
+                <rect x="78" y="13" width="9" height="9" />
+
+                <rect x="5" y="70" width="25" height="25" rx="4" />
+                <rect x="10" y="75" width="15" height="15" fill="white" />
+                <rect x="13" y="78" width="9" height="9" />
+
+                {/* Data dots */}
+                <rect x="40" y="10" width="8" height="8" />
+                <rect x="52" y="10" width="8" height="8" />
+                <rect x="36" y="24" width="8" height="8" />
+                <rect x="48" y="24" width="8" height="8" />
+                <rect x="10" y="40" width="8" height="8" />
+                <rect x="22" y="40" width="8" height="8" />
+                <rect x="36" y="40" width="10" height="10" />
+                <rect x="50" y="40" width="8" height="8" />
+                <rect x="64" y="40" width="8" height="8" />
+                <rect x="78" y="40" width="8" height="8" />
+                <rect x="10" y="52" width="8" height="8" />
+                <rect x="24" y="52" width="8" height="8" />
+                <rect x="40" y="54" width="8" height="8" />
+                <rect x="54" y="54" width="8" height="8" />
+                <rect x="68" y="54" width="8" height="8" />
+                <rect x="40" y="70" width="8" height="8" />
+                <rect x="54" y="70" width="8" height="8" />
+                <rect x="70" y="70" width="10" height="10" />
+                <rect x="84" y="70" width="8" height="8" />
+                <rect x="40" y="84" width="8" height="8" />
+                <rect x="56" y="84" width="8" height="8" />
+                <rect x="72" y="84" width="8" height="8" />
+                <rect x="84" y="84" width="8" height="8" />
+              </svg>
+              <p className="mt-2 text-xs font-mono font-bold text-slate-800 tracking-wider">
+                SPACE CODE: {space.code}
+              </p>
+            </div>
+
+            <div>
+              <h4 className="font-bold text-sm text-foreground">{space.name}</h4>
+              <p className="text-xs text-muted-foreground mt-0.5">Scan or share link to join instantly</p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void copyInviteLink()}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-xs font-bold text-primary-foreground transition-transform hover:scale-102"
+            >
+              {copiedInvite ? <Check className="size-4" /> : <Copy className="size-4" />}
+              <span>{copiedInvite ? "Copied Link!" : "Copy Invite Link"}</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {showPollModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
