@@ -28,6 +28,10 @@ import {
   FileText,
   FileDown,
   Clock,
+  Zap,
+  Lock,
+  Unlock,
+  KeyRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -84,6 +88,14 @@ type MediaTab = "all" | "image" | "video" | "audio" | "file";
 type DisappearingTimer = "off" | "24h" | "7d" | "30d";
 
 const QUICK_EMOJIS = ["🔥", "👍", "❤️", "🎉", "😂", "💯", "🚀", "👏"];
+const DRAFT_TEMPLATES = [
+  "👋 Hey there! How are you doing?",
+  "📍 I'm on my way now!",
+  "📞 Call me when you get a chance.",
+  "📁 I've shared the files in this space.",
+  "⏳ Give me 5 minutes to check.",
+  "✅ Got it, thanks!",
+];
 
 export function ChatPanel({
   space,
@@ -118,8 +130,20 @@ export function ChatPanel({
   });
   const [showDisappearingMenu, setShowDisappearingMenu] = useState(false);
   const [showWallpaperMenu, setShowWallpaperMenu] = useState(false);
+  const [showSnippetsMenu, setShowSnippetsMenu] = useState(false);
   const [showGalleryModal, setShowGalleryModal] = useState(false);
   const [activeMediaTab, setActiveMediaTab] = useState<MediaTab>("all");
+
+  // Space PIN Lock state
+  const [spacePin, setSpacePin] = useState<string>(() => {
+    return space?.id ? localStorage.getItem(`heymamaey.pin.${space.id}`) || "" : "";
+  });
+  const [isLocked, setIsLocked] = useState<boolean>(() => {
+    return space?.id ? Boolean(localStorage.getItem(`heymamaey.pin.${space.id}`)) : false;
+  });
+  const [pinInput, setPinInput] = useState("");
+  const [showPinSetup, setShowPinSetup] = useState(false);
+  const [newPinInput, setNewPinInput] = useState("");
 
   const [starredIds, setStarredIds] = useState<Set<string>>(() => {
     try {
@@ -154,6 +178,15 @@ export function ChatPanel({
   const lastMsgCountRef = useRef(messages.length);
 
   useEffect(() => {
+    if (space?.id) {
+      const savedPin = localStorage.getItem(`heymamaey.pin.${space.id}`) || "";
+      setSpacePin(savedPin);
+      setIsLocked(Boolean(savedPin));
+      setPinInput("");
+    }
+  }, [space?.id]);
+
+  useEffect(() => {
     if (messages.length > lastMsgCountRef.current) {
       const last = messages[messages.length - 1];
       if (last && last.authorId !== userId) {
@@ -162,6 +195,41 @@ export function ChatPanel({
     }
     lastMsgCountRef.current = messages.length;
   }, [messages, userId, mutedSound]);
+
+  const unlockSpace = () => {
+    if (pinInput === spacePin) {
+      setIsLocked(false);
+      setPinInput("");
+      toast.success("Space unlocked!");
+    } else {
+      toast.error("Incorrect PIN");
+    }
+  };
+
+  const savePin = () => {
+    if (newPinInput.length !== 4 || !/^\d+$/.test(newPinInput)) {
+      toast.error("PIN must be 4 numbers");
+      return;
+    }
+    if (space?.id) {
+      localStorage.setItem(`heymamaey.pin.${space.id}`, newPinInput);
+      setSpacePin(newPinInput);
+      setIsLocked(false);
+      setShowPinSetup(false);
+      setNewPinInput("");
+      toast.success("PIN protection enabled for this Space");
+    }
+  };
+
+  const removePin = () => {
+    if (space?.id) {
+      localStorage.removeItem(`heymamaey.pin.${space.id}`);
+      setSpacePin("");
+      setIsLocked(false);
+      setShowPinSetup(false);
+      toast.info("PIN lock removed");
+    }
+  };
 
   const changeWallpaper = (w: WallpaperStyle) => {
     setWallpaper(w);
@@ -549,6 +617,38 @@ export function ChatPanel({
     return "none";
   };
 
+  if (isLocked) {
+    return (
+      <section className="chat-canvas flex h-full flex-1 flex-col items-center justify-center p-6 text-center">
+        <div className="w-full max-w-sm rounded-3xl bg-card border border-border p-6 shadow-2xl space-y-4 flex flex-col items-center animate-in zoom-in-95 duration-200">
+          <div className="flex size-14 items-center justify-center rounded-full bg-primary/15 text-primary">
+            <Lock className="size-7" />
+          </div>
+          <div>
+            <h3 className="font-bold text-base text-foreground">{space.name} is Locked</h3>
+            <p className="text-xs text-muted-foreground mt-1">Enter your 4-digit PIN to access messages</p>
+          </div>
+          <input
+            type="password"
+            maxLength={4}
+            value={pinInput}
+            onChange={(e) => setPinInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && unlockSpace()}
+            placeholder="••••"
+            className="w-36 text-center font-mono text-2xl tracking-widest rounded-xl bg-background py-2.5 outline-none ring-1 ring-input focus:ring-primary"
+          />
+          <button
+            type="button"
+            onClick={unlockSpace}
+            className="w-full rounded-xl bg-primary py-2.5 text-xs font-bold text-primary-foreground shadow-lg transition-transform hover:scale-102"
+          >
+            Unlock Space
+          </button>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="chat-canvas flex h-full min-w-0 flex-1 flex-col" style={getWallpaperStyle()}>
       <header className="flex flex-col border-b border-border bg-sidebar px-4 py-3">
@@ -572,6 +672,18 @@ export function ChatPanel({
               {activeMembers.length > 0 && <span aria-label="Active members">· {activeMembers.join(", ")}</span>}
             </p>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setShowPinSetup((v) => !v)}
+            title={spacePin ? "Lock Space / PIN Settings" : "Set Space PIN Lock"}
+            className={
+              "rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors " +
+              (spacePin ? "text-primary" : "")
+            }
+          >
+            {spacePin ? <Lock className="size-4 text-primary" /> : <Unlock className="size-4" />}
+          </button>
 
           <div className="relative">
             <button
@@ -801,17 +913,49 @@ export function ChatPanel({
       </div>
 
       <footer className="border-t border-border bg-sidebar p-3">
-        <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-1">
-          {QUICK_EMOJIS.map((emoji) => (
+        <div className="mb-2 flex items-center justify-between">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+            {QUICK_EMOJIS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => setText((t) => t + emoji)}
+                className="flex size-7 shrink-0 items-center justify-center rounded-full bg-card text-sm transition-transform hover:scale-125 hover:bg-secondary"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative">
             <button
-              key={emoji}
               type="button"
-              onClick={() => setText((t) => t + emoji)}
-              className="flex size-7 shrink-0 items-center justify-center rounded-full bg-card text-sm transition-transform hover:scale-125 hover:bg-secondary"
+              onClick={() => setShowSnippetsMenu((v) => !v)}
+              className="inline-flex items-center gap-1 rounded-full bg-card px-2.5 py-1 text-[11px] font-semibold text-primary border border-border hover:bg-secondary transition-colors"
             >
-              {emoji}
+              <Zap className="size-3 text-amber-400 fill-amber-400" />
+              <span>Snippets</span>
             </button>
-          ))}
+
+            {showSnippetsMenu && (
+              <div className="absolute right-0 bottom-8 z-40 w-64 rounded-2xl border border-border bg-card p-2 shadow-2xl animate-in zoom-in-95 duration-150 space-y-1">
+                <div className="px-2 py-1 text-[10px] uppercase font-bold text-muted-foreground">Quick Templates</div>
+                {DRAFT_TEMPLATES.map((tmpl, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setText(tmpl);
+                      setShowSnippetsMenu(false);
+                    }}
+                    className="w-full text-left rounded-xl px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors truncate"
+                  >
+                    {tmpl}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {typingArray.length > 0 && (
@@ -924,6 +1068,55 @@ export function ChatPanel({
           }}
         />
       </footer>
+
+      {/* PIN Setup Modal */}
+      {showPinSetup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-xs rounded-3xl bg-card border border-border p-5 shadow-2xl flex flex-col items-center text-center space-y-4">
+            <div className="flex size-12 items-center justify-center rounded-full bg-primary/15 text-primary">
+              <KeyRound className="size-6" />
+            </div>
+            <div>
+              <h3 className="font-bold text-sm">Space Lock PIN</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">Protect this Space with a 4-digit code</p>
+            </div>
+            <input
+              type="password"
+              maxLength={4}
+              value={newPinInput}
+              onChange={(e) => setNewPinInput(e.target.value)}
+              placeholder="1234"
+              className="w-32 text-center font-mono text-xl tracking-widest rounded-xl bg-background py-2 outline-none ring-1 ring-input focus:ring-primary"
+            />
+            <div className="flex gap-2 w-full pt-1">
+              {spacePin ? (
+                <button
+                  type="button"
+                  onClick={removePin}
+                  className="flex-1 rounded-xl bg-secondary py-2 text-xs font-semibold text-destructive hover:bg-destructive/10"
+                >
+                  Remove PIN
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowPinSetup(false)}
+                  className="flex-1 rounded-xl bg-secondary py-2 text-xs font-semibold text-muted-foreground"
+                >
+                  Cancel
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={savePin}
+                className="flex-1 rounded-xl bg-primary py-2 text-xs font-bold text-primary-foreground"
+              >
+                Save PIN
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Media Gallery Modal */}
       {showGalleryModal && (
