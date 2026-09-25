@@ -11,6 +11,7 @@ import {
   AudioLines,
   Video,
   X,
+  Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -28,7 +29,7 @@ import {
 import { MessageBubble } from "./MessageBubble";
 import { InAppCall } from "./InAppCall";
 
-const MAX_BYTES = 12 * 1024 * 1024;
+const MAX_BYTES = 50 * 1024 * 1024; // 50 MB limit
 
 export function ChatPanel({
   space,
@@ -173,7 +174,7 @@ export function ChatPanel({
     for (const file of Array.from(files)) {
       if (file.size > MAX_BYTES) {
         toast.error(`${file.name} is too large (${formatBytes(file.size)})`, {
-          description: "Keep shared files under 12 MB in this preview.",
+          description: "Keep shared files under 50 MB in this space.",
         });
         continue;
       }
@@ -387,21 +388,33 @@ export function ChatPanel({
 
       {lightbox && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 p-6"
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/95 p-4 sm:p-6 animate-in fade-in duration-200"
           onClick={() => setLightbox(null)}
         >
-          <button
-            type="button"
-            aria-label="Close image"
-            className="absolute right-5 top-5 rounded-full bg-card p-2"
-            onClick={() => setLightbox(null)}
-          >
-            <X className="size-4" />
-          </button>
+          <div className="absolute right-5 top-5 flex items-center gap-2">
+            <a
+              href={lightbox}
+              download={`space-connect-photo-${Date.now()}.jpg`}
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-1.5 rounded-full bg-card px-4 py-2 text-xs font-semibold text-foreground shadow-xl hover:text-primary transition-colors"
+            >
+              <Download className="size-4" />
+              <span>Download Photo</span>
+            </a>
+            <button
+              type="button"
+              aria-label="Close image"
+              className="rounded-full bg-card p-2 text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => setLightbox(null)}
+            >
+              <X className="size-4" />
+            </button>
+          </div>
           <img
             src={lightbox}
             alt="Full size attachment"
-            className="max-h-full max-w-full rounded-xl object-contain"
+            className="max-h-[85vh] max-w-full rounded-2xl object-contain shadow-2xl border border-border"
+            onClick={(e) => e.stopPropagation()}
           />
         </div>
       )}

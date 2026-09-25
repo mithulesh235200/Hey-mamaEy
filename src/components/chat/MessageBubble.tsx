@@ -66,6 +66,31 @@ export function MessageBubble({
     }
   };
 
+  const downloadMedia = () => {
+    if (!message.dataUrl) return;
+    try {
+      const a = document.createElement("a");
+      a.href = message.dataUrl;
+      const ext =
+        message.fileName?.split(".").pop() ||
+        (message.kind === "image"
+          ? "jpg"
+          : message.kind === "video"
+            ? "mp4"
+            : message.kind === "audio"
+              ? "mp3"
+              : "bin");
+      const name = message.fileName || `space-connect-${message.kind}-${Date.now()}.${ext}`;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      toast.success(`Downloading ${name}`);
+    } catch {
+      toast.error("Couldn't download this media file");
+    }
+  };
+
   if (system) {
     return (
       <div className="my-2 flex justify-center">
@@ -102,29 +127,64 @@ export function MessageBubble({
         )}
 
         {message.kind === "image" && message.dataUrl && (
-          <button
-            type="button"
-            onClick={() => onOpenImage(message.dataUrl!)}
-            className="block overflow-hidden rounded-xl"
-          >
-            <img
-              src={message.dataUrl}
-              alt={message.fileName ?? "Shared image"}
-              className="max-h-72 w-full max-w-xs object-cover transition-transform hover:scale-[1.02]"
-            />
-          </button>
+          <div className="relative group/img overflow-hidden rounded-xl">
+            <button
+              type="button"
+              onClick={() => onOpenImage(message.dataUrl!)}
+              className="block w-full text-left"
+            >
+              <img
+                src={message.dataUrl}
+                alt={message.fileName ?? "Shared image"}
+                className="max-h-72 w-full max-w-xs object-cover transition-transform hover:scale-[1.02]"
+              />
+            </button>
+            <button
+              type="button"
+              onClick={downloadMedia}
+              aria-label="Download image"
+              title="Download image"
+              className="absolute right-2 top-2 flex size-8 items-center justify-center rounded-full bg-background/80 text-foreground backdrop-blur-sm transition-opacity hover:bg-background hover:text-primary shadow-md sm:opacity-0 sm:group-hover/img:opacity-100"
+            >
+              <Download className="size-4" />
+            </button>
+          </div>
         )}
 
         {message.kind === "video" && message.dataUrl && (
-          <video
-            src={message.dataUrl}
-            controls
-            className="max-h-72 w-full max-w-xs rounded-xl bg-black"
-          />
+          <div className="relative group/vid max-w-xs">
+            <video
+              src={message.dataUrl}
+              controls
+              className="max-h-72 w-full rounded-xl bg-black"
+            />
+            <button
+              type="button"
+              onClick={downloadMedia}
+              aria-label="Download video"
+              title="Download video"
+              className="absolute right-2 top-2 flex size-8 items-center justify-center rounded-full bg-background/80 text-foreground backdrop-blur-sm transition-opacity hover:bg-background hover:text-primary shadow-md sm:opacity-0 sm:group-hover/vid:opacity-100"
+            >
+              <Download className="size-4" />
+            </button>
+          </div>
         )}
 
         {message.kind === "audio" && message.dataUrl && (
-          <AudioMessage src={message.dataUrl} id={message.id} label={message.fileName} />
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              <AudioMessage src={message.dataUrl} id={message.id} label={message.fileName} />
+            </div>
+            <button
+              type="button"
+              onClick={downloadMedia}
+              aria-label="Download audio"
+              title="Download audio"
+              className="flex size-8 shrink-0 items-center justify-center rounded-full bg-background/50 text-foreground hover:text-primary transition-colors"
+            >
+              <Download className="size-4" />
+            </button>
+          </div>
         )}
 
         {message.kind === "file" && message.dataUrl && (
@@ -136,14 +196,14 @@ export function MessageBubble({
               <p className="truncate text-xs font-medium">{message.fileName}</p>
               <p className="text-[10px] text-muted-foreground">{formatBytes(message.fileSize)}</p>
             </div>
-            <a
-              href={message.dataUrl}
-              download={message.fileName}
+            <button
+              type="button"
+              onClick={downloadMedia}
               aria-label={`Download ${message.fileName}`}
               className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-transform hover:scale-105"
             >
               <Download className="size-4" />
-            </a>
+            </button>
           </div>
         )}
 
@@ -159,6 +219,11 @@ export function MessageBubble({
       </div>
 
       <div className="mb-1 flex shrink-0 items-center gap-1 rounded-full bg-card p-1 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+        {message.dataUrl && (
+          <ActionButton label="Download file" onClick={downloadMedia}>
+            <Download className="size-3.5" />
+          </ActionButton>
+        )}
         <ActionButton label="Copy message" onClick={() => void copyMessage()}>
           <Clipboard className="size-3.5" />
         </ActionButton>
