@@ -14,6 +14,8 @@ import {
   Download,
   Search,
   ArrowDown,
+  Pin,
+  BarChart2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -54,10 +56,16 @@ export function ChatPanel({
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [editing, setEditing] = useState<Message | null>(null);
+  const [pinnedMessage, setPinnedMessage] = useState<Message | null>(null);
   const [callMode, setCallMode] = useState<"voice" | "video" | null>(null);
   const [activeMembers, setActiveMembers] = useState<string[]>([]);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+
+  // Poll creation modal state
+  const [showPollModal, setShowPollModal] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState("");
+  const [pollOptions, setPollOptions] = useState<string[]>(["", ""]);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -264,6 +272,29 @@ export function ChatPanel({
     }
   };
 
+  const createPoll = async () => {
+    if (!pollQuestion.trim()) {
+      toast.error("Please enter a poll question");
+      return;
+    }
+    const validOptions = pollOptions.filter((o) => o.trim().length > 0);
+    if (validOptions.length < 2) {
+      toast.error("Please add at least 2 options for the poll");
+      return;
+    }
+
+    const pollText = `📊 **POLL: ${pollQuestion.trim()}**\n` + validOptions.map((opt, i) => `${i + 1}. ${opt.trim()}`).join("\n");
+    const ok = await sendMessage({ spaceId: space.id, kind: "text", text: pollText });
+    if (ok) {
+      toast.success("Poll created!");
+      setShowPollModal(false);
+      setPollQuestion("");
+      setPollOptions(["", ""]);
+    } else {
+      toast.error("Couldn't create poll");
+    }
+  };
+
   const handleFiles = async (files: FileList | null) => {
     if (!files) return;
     for (const file of Array.from(files)) {
@@ -399,6 +430,28 @@ export function ChatPanel({
         )}
       </header>
 
+      {pinnedMessage && (
+        <div className="flex items-center justify-between border-b border-border bg-secondary/80 px-4 py-2 text-xs backdrop-blur-md animate-in slide-in-from-top-2 duration-150">
+          <div className="flex items-center gap-2 min-w-0">
+            <Pin className="size-3.5 shrink-0 text-primary" />
+            <span className="font-semibold text-primary">Pinned:</span>
+            <span className="truncate text-muted-foreground">
+              {pinnedMessage.text || pinnedMessage.fileName || "Media attachment"}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setPinnedMessage(null);
+              toast.info("Message unpinned");
+            }}
+            className="rounded p-1 text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
+
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
@@ -416,6 +469,10 @@ export function ChatPanel({
             mine={m.authorId === userId}
             onForward={onForward}
             onOpenImage={setLightbox}
+            onPin={(message) => {
+              setPinnedMessage(message);
+              toast.success("Message pinned to top");
+            }}
             onEdit={(message) => {
               setEditing(message);
               setText(message.text ?? "");
@@ -479,6 +536,9 @@ export function ChatPanel({
             <IconBtn label="Send audio file" onClick={() => audioInputRef.current?.click()}>
               <AudioLines className="size-4" />
             </IconBtn>
+            <IconBtn label="Create Poll" onClick={() => setShowPollModal(true)}>
+              <BarChart2 className="size-4" />
+            </IconBtn>
           </div>
           <textarea
             value={text}
@@ -541,6 +601,95 @@ export function ChatPanel({
           }}
         />
       </footer>
+
+      {showPollModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md rounded-2xl bg-card border border-border p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <BarChart2 className="size-5 text-primary" />
+                <h3 className="font-bold text-sm">Create a Space Poll</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPollModal(false)}
+                className="rounded-full p-1 text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Question
+              </label>
+              <input
+                type="text"
+                value={pollQuestion}
+                onChange={(e) => setPollQuestion(e.target.value)}
+                placeholder="e.g. What time should we call?"
+                className="mt-1 w-full rounded-xl bg-background px-3 py-2 text-sm outline-none ring-1 ring-input focus:ring-primary"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Options
+              </label>
+              {pollOptions.map((opt, i) => (
+                <div key={i} className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    value={opt}
+                    onChange={(e) => {
+                      const copy = [...pollOptions];
+                      copy[i] = e.target.value;
+                      setPollOptions(copy);
+                    }}
+                    placeholder={`Option ${i + 1}`}
+                    className="flex-1 rounded-xl bg-background px-3 py-2 text-xs outline-none ring-1 ring-input focus:ring-primary"
+                  />
+                  {pollOptions.length > 2 && (
+                    <button
+                      type="button"
+                      onClick={() => setPollOptions(pollOptions.filter((_, idx) => idx !== i))}
+                      className="text-muted-foreground hover:text-destructive text-xs"
+                    >
+                      <X className="size-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {pollOptions.length < 5 && (
+                <button
+                  type="button"
+                  onClick={() => setPollOptions([...pollOptions, ""])}
+                  className="text-xs font-semibold text-primary hover:underline mt-1"
+                >
+                  + Add Option
+                </button>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowPollModal(false)}
+                className="rounded-xl px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void createPoll()}
+                className="rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground transition-transform hover:scale-105"
+              >
+                Create Poll
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {lightbox && (
         <div

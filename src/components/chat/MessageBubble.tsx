@@ -6,6 +6,7 @@ import {
   FileText,
   File as FileIcon,
   Forward,
+  Pin,
   Smile,
   Trash2,
 } from "lucide-react";
@@ -48,6 +49,7 @@ export function MessageBubble({
   onOpenImage,
   onEdit,
   onDelete,
+  onPin,
 }: {
   message: Message;
   mine: boolean;
@@ -55,6 +57,7 @@ export function MessageBubble({
   onOpenImage: (src: string) => void;
   onEdit: (m: Message) => void;
   onDelete: (m: Message) => void;
+  onPin?: (m: Message) => void;
 }) {
   const system = message.authorId === "SYSTEM";
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -283,6 +286,11 @@ export function MessageBubble({
         >
           <Smile className="size-3.5" />
         </ActionButton>
+        {onPin && (
+          <ActionButton label="Pin message" onClick={() => onPin(message)}>
+            <Pin className="size-3.5" />
+          </ActionButton>
+        )}
         {message.dataUrl && (
           <ActionButton label="Download file" onClick={downloadMedia}>
             <Download className="size-3.5" />
