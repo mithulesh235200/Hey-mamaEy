@@ -23,6 +23,7 @@ import {
   Volume2,
   VolumeX,
   Sparkles,
+  Sliders,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -74,6 +75,7 @@ function playChime(type: "send" | "receive", muted: boolean) {
 }
 
 type WallpaperStyle = "default" | "dots" | "grid" | "cosmic";
+type PhotoFilter = "none" | "grayscale" | "sepia" | "vintage" | "neon";
 
 export function ChatPanel({
   space,
@@ -94,6 +96,7 @@ export function ChatPanel({
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [activePhotoFilter, setActivePhotoFilter] = useState<PhotoFilter>("none");
   const [recording, setRecording] = useState(false);
   const [recordSecs, setRecordSecs] = useState(0);
   const [editing, setEditing] = useState<Message | null>(null);
@@ -173,6 +176,12 @@ export function ChatPanel({
       }
       return next;
     });
+  };
+
+  const handleReplyQuote = (m: Message) => {
+    const author = m.authorName || "User";
+    const snippet = m.text ? (m.text.length > 40 ? m.text.slice(0, 40) + "..." : m.text) : m.fileName || "attachment";
+    setText((prev) => `> Replying to @${author}: "${snippet}"\n${prev}`);
   };
 
   useEffect(() => {
@@ -477,6 +486,14 @@ export function ChatPanel({
     return {};
   };
 
+  const getPhotoFilterStyle = () => {
+    if (activePhotoFilter === "grayscale") return "grayscale(100%)";
+    if (activePhotoFilter === "sepia") return "sepia(100%)";
+    if (activePhotoFilter === "vintage") return "sepia(50%) contrast(120%) brightness(90%)";
+    if (activePhotoFilter === "neon") return "saturate(200%) contrast(130%)";
+    return "none";
+  };
+
   return (
     <section className="chat-canvas flex h-full min-w-0 flex-1 flex-col" style={getWallpaperStyle()}>
       <header className="flex flex-col border-b border-border bg-sidebar px-4 py-3">
@@ -648,6 +665,7 @@ export function ChatPanel({
               toast.success("Message pinned to top");
             }}
             onStar={toggleStar}
+            onReply={handleReplyQuote}
             isStarred={starredIds.has(m.id)}
             onEdit={(message) => {
               setEditing(message);
@@ -820,6 +838,7 @@ export function ChatPanel({
                     onForward={onForward}
                     onOpenImage={setLightbox}
                     onStar={toggleStar}
+                    onReply={handleReplyQuote}
                     isStarred={true}
                     onEdit={(message) => {
                       setShowStarredModal(false);
@@ -1015,9 +1034,28 @@ export function ChatPanel({
       {lightbox && (
         <div
           className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/95 p-4 sm:p-6 animate-in fade-in duration-200"
-          onClick={() => setLightbox(null)}
+          onClick={() => {
+            setLightbox(null);
+            setActivePhotoFilter("none");
+          }}
         >
-          <div className="absolute right-5 top-5 flex items-center gap-2">
+          <div className="absolute right-5 top-5 flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 rounded-full bg-card px-2 py-1 shadow-xl border border-border" onClick={(e) => e.stopPropagation()}>
+              <Sliders className="size-3.5 text-primary ml-1" />
+              {(["none", "grayscale", "sepia", "vintage", "neon"] as PhotoFilter[]).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setActivePhotoFilter(f)}
+                  className={
+                    "rounded-full px-2 py-0.5 text-[10px] font-medium capitalize transition-colors " +
+                    (activePhotoFilter === f ? "bg-primary text-primary-foreground font-bold" : "text-muted-foreground hover:text-foreground")
+                  }
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
             <a
               href={lightbox}
               download={`space-connect-photo-${Date.now()}.jpg`}
@@ -1031,7 +1069,10 @@ export function ChatPanel({
               type="button"
               aria-label="Close image"
               className="rounded-full bg-card p-2 text-muted-foreground hover:text-foreground transition-colors"
-              onClick={() => setLightbox(null)}
+              onClick={() => {
+                setLightbox(null);
+                setActivePhotoFilter("none");
+              }}
             >
               <X className="size-4" />
             </button>
@@ -1039,7 +1080,8 @@ export function ChatPanel({
           <img
             src={lightbox}
             alt="Full size attachment"
-            className="max-h-[85vh] max-w-full rounded-2xl object-contain shadow-2xl border border-border"
+            style={{ filter: getPhotoFilterStyle() }}
+            className="max-h-[85vh] max-w-full rounded-2xl object-contain shadow-2xl border border-border transition-all duration-200"
             onClick={(e) => e.stopPropagation()}
           />
         </div>

@@ -7,6 +7,7 @@ import {
   File as FileIcon,
   Forward,
   Pin,
+  Reply,
   Smile,
   Star,
   Trash2,
@@ -52,6 +53,7 @@ export function MessageBubble({
   onDelete,
   onPin,
   onStar,
+  onReply,
   isStarred,
 }: {
   message: Message;
@@ -62,6 +64,7 @@ export function MessageBubble({
   onDelete: (m: Message) => void;
   onPin?: (m: Message) => void;
   onStar?: (m: Message) => void;
+  onReply?: (m: Message) => void;
   isStarred?: boolean;
 }) {
   const system = message.authorId === "SYSTEM";
@@ -294,6 +297,11 @@ export function MessageBubble({
         >
           <Smile className="size-3.5" />
         </ActionButton>
+        {onReply && (
+          <ActionButton label="Reply to message" onClick={() => onReply(message)}>
+            <Reply className="size-3.5" />
+          </ActionButton>
+        )}
         {onStar && (
           <ActionButton
             label={isStarred ? "Unstar message" : "Star message"}

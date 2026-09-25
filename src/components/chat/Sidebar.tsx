@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Copy, Hash, LogOut, Palette, Plus, RefreshCw, Users } from "lucide-react";
+import { Copy, Hash, LogOut, Palette, Plus, RefreshCw, Smile, Users } from "lucide-react";
 import { toast } from "sonner";
 import {
   createSpace,
@@ -22,6 +22,8 @@ const THEMES: { id: Theme; label: string; icon: string }[] = [
   { id: "sunset", label: "Sunset", icon: "🌅" },
 ];
 
+const USER_STATUSES = ["🚀 Coding", "🎧 Music", "☕ Break", "💤 Away", "✨ Online"];
+
 export function Sidebar({
   userId,
   displayName,
@@ -41,6 +43,10 @@ export function Sidebar({
   const [newName, setNewName] = useState("");
   const [restoreId, setRestoreId] = useState("");
   const [showRestore, setShowRestore] = useState(false);
+  const [userStatus, setUserStatus] = useState<string>(() => {
+    return localStorage.getItem("heymamaey.userStatus") || "✨ Online";
+  });
+  const [showStatusMenu, setShowStatusMenu] = useState(false);
 
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window !== "undefined") {
@@ -55,6 +61,13 @@ export function Sidebar({
       localStorage.setItem("heymamaey.theme", theme);
     }
   }, [theme]);
+
+  const selectStatus = (st: string) => {
+    setUserStatus(st);
+    localStorage.setItem("heymamaey.userStatus", st);
+    setShowStatusMenu(false);
+    toast.success(`Status updated to ${st}`);
+  };
 
   const copyId = async () => {
     try {
@@ -159,9 +172,35 @@ export function Sidebar({
         </div>
 
         <div className="mt-3 rounded-xl bg-card p-3 glow-ring">
-          <label htmlFor="display-name" className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            Your name
-          </label>
+          <div className="flex items-center justify-between">
+            <label htmlFor="display-name" className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Your name
+            </label>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowStatusMenu((v) => !v)}
+                className="inline-flex items-center gap-1 rounded-full bg-secondary/80 px-2 py-0.5 text-[10px] font-semibold text-primary transition-colors hover:bg-secondary"
+              >
+                <Smile className="size-3" />
+                <span>{userStatus}</span>
+              </button>
+              {showStatusMenu && (
+                <div className="absolute right-0 top-6 z-30 w-32 rounded-xl border border-border bg-card p-1 shadow-2xl animate-in zoom-in-95 duration-150">
+                  {USER_STATUSES.map((st) => (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => selectStatus(st)}
+                      className="flex w-full items-center rounded-lg px-2 py-1 text-[11px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    >
+                      {st}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
           <input
             id="display-name"
             value={displayName === "You" ? "" : displayName}
@@ -170,8 +209,8 @@ export function Sidebar({
             maxLength={40}
             className="mt-1 w-full rounded-lg bg-background px-2.5 py-2 text-sm outline-none ring-1 ring-input focus:ring-primary"
           />
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Your ID</p>
-          <p className="mt-1 font-mono text-sm font-semibold text-primary">{userId}</p>
+          <p className="mt-2 text-[10px] uppercase tracking-wider text-muted-foreground">Your ID</p>
+          <p className="mt-0.5 font-mono text-sm font-semibold text-primary">{userId}</p>
           <div className="mt-2 flex gap-2">
             <button
               type="button"
