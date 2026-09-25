@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
 
-function seededBars(seed: string, count = 44) {
+function seededBars(seed: string, count = 38) {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 9973;
   return Array.from({ length: count }, (_, i) => {
@@ -9,6 +9,8 @@ function seededBars(seed: string, count = 44) {
     return 0.25 + ((h >> 8) % 100) / 133;
   });
 }
+
+const SPEEDS = [1, 1.5, 2];
 
 export function AudioMessage({
   src,
@@ -23,6 +25,7 @@ export function AudioMessage({
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [speedIndex, setSpeedIndex] = useState(0);
   const bars = useMemo(() => seededBars(id), [id]);
 
   useEffect(() => {
@@ -60,6 +63,14 @@ export function AudioMessage({
     }
   };
 
+  const cycleSpeed = () => {
+    const next = (speedIndex + 1) % SPEEDS.length;
+    setSpeedIndex(next);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = SPEEDS[next];
+    }
+  };
+
   const seek = (e: React.MouseEvent<HTMLDivElement>) => {
     const el = audioRef.current;
     if (!el || !duration) return;
@@ -68,7 +79,7 @@ export function AudioMessage({
   };
 
   return (
-    <div className="flex w-64 items-center gap-3 rounded-xl bg-background/40 p-2.5 sm:w-72">
+    <div className="flex w-64 items-center gap-2.5 rounded-xl bg-background/40 p-2.5 sm:w-72">
       <audio ref={audioRef} src={src} preload="metadata" />
       <button
         type="button"
@@ -94,11 +105,21 @@ export function AudioMessage({
             );
           })}
         </div>
-        <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
+        <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
           <span className="truncate">{label ?? "Voice note"}</span>
-          <span>
-            {fmt(progress)} / {duration ? fmt(duration) : "--:--"}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span>
+              {fmt(progress)} / {duration ? fmt(duration) : "--:--"}
+            </span>
+            <button
+              type="button"
+              onClick={cycleSpeed}
+              title="Change Playback Speed"
+              className="rounded bg-background/60 px-1 py-0.5 font-mono text-[9px] font-bold text-muted-foreground hover:text-primary transition-colors"
+            >
+              {SPEEDS[speedIndex]}x
+            </button>
+          </div>
         </div>
       </div>
     </div>

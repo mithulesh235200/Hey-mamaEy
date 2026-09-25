@@ -6,13 +6,16 @@ import {
   FileText,
   File as FileIcon,
   Forward,
+  Smile,
   Trash2,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import type { Message } from "@/lib/heymama";
 import { formatBytes, formatTime } from "@/lib/heymama";
 import { AudioMessage } from "./AudioMessage";
+
+const REACTION_EMOJIS = ["❤️", "👍", "😂", "🔥", "😮", "😢"];
 
 function renderMarkdown(text: string) {
   const tokens = text.split(/(\*\*[^*]+\*\*|_[^_]+_|`[^`]+`)/g);
@@ -54,6 +57,8 @@ export function MessageBubble({
   onDelete: (m: Message) => void;
 }) {
   const system = message.authorId === "SYSTEM";
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [reactions, setReactions] = useState<Record<string, number>>({});
 
   const copyMessage = async () => {
     const value = message.text ?? message.fileName ?? message.dataUrl;
@@ -64,6 +69,20 @@ export function MessageBubble({
     } catch {
       toast.error("Couldn’t copy this message");
     }
+  };
+
+  const toggleReaction = (emoji: string) => {
+    setReactions((prev) => {
+      const current = prev[emoji] ?? 0;
+      const next = { ...prev };
+      if (current > 0) {
+        delete next[emoji];
+      } else {
+        next[emoji] = 1;
+      }
+      return next;
+    });
+    setShowEmojiPicker(false);
   };
 
   const downloadMedia = () => {
@@ -101,8 +120,10 @@ export function MessageBubble({
     );
   }
 
+  const hasReactions = Object.keys(reactions).length > 0;
+
   return (
-    <div className={"group flex items-end gap-2 " + (mine ? "flex-row-reverse" : "")}>
+    <div className={"group relative flex items-end gap-2 " + (mine ? "flex-row-reverse" : "")}>
       <div
         className={
           "relative max-w-[85%] rounded-2xl px-3 py-2 text-sm shadow-lg sm:max-w-[70%] " +
@@ -213,12 +234,55 @@ export function MessageBubble({
           </p>
         ) : null}
 
-        <div className="mt-1 text-right text-[10px] text-muted-foreground">
-          {formatTime(message.createdAt)}
+        <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+          {hasReactions ? (
+            <div className="flex flex-wrap gap-1">
+              {Object.entries(reactions).map(([emoji, count]) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  onClick={() => toggleReaction(emoji)}
+                  className="inline-flex items-center gap-0.5 rounded-full bg-background/60 px-1.5 py-0.5 text-[11px] ring-1 ring-border"
+                >
+                  <span>{emoji}</span>
+                  {count > 1 && <span className="font-mono text-[9px]">{count}</span>}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div />
+          )}
+          <span>{formatTime(message.createdAt)}</span>
         </div>
       </div>
 
+      {showEmojiPicker && (
+        <div
+          className={
+            "absolute bottom-10 z-30 flex items-center gap-1 rounded-full border border-border bg-card p-1.5 shadow-2xl animate-in zoom-in-95 duration-150 " +
+            (mine ? "right-0" : "left-0")
+          }
+        >
+          {REACTION_EMOJIS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              onClick={() => toggleReaction(emoji)}
+              className="flex size-7 items-center justify-center rounded-full text-base transition-transform hover:scale-125 hover:bg-secondary"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="mb-1 flex shrink-0 items-center gap-1 rounded-full bg-card p-1 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+        <ActionButton
+          label="React with emoji"
+          onClick={() => setShowEmojiPicker((v) => !v)}
+        >
+          <Smile className="size-3.5" />
+        </ActionButton>
         {message.dataUrl && (
           <ActionButton label="Download file" onClick={downloadMedia}>
             <Download className="size-3.5" />

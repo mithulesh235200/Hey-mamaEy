@@ -12,6 +12,8 @@ import {
   Video,
   X,
   Download,
+  Search,
+  ArrowDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -47,20 +49,32 @@ export function ChatPanel({
   onOpenSidebar: () => void;
 }) {
   const [text, setText] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [editing, setEditing] = useState<Message | null>(null);
   const [callMode, setCallMode] = useState<"voice" | "video" | null>(null);
   const [activeMembers, setActiveMembers] = useState<string[]>([]);
+  const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const presenceChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   useEffect(() => {
     if (!space) return;
-    const channel = supabase.channel(`presence:${space.code}`);
+    const channel = supabase.channel(`presence:${space.code}`, {
+      config: { broadcast: { self: false } },
+    });
+    presenceChannelRef.current = channel;
+
     const updateMembers = () => {
       const state = channel.presenceState<{ name?: string }>();
       const names = Object.values(state)
@@ -74,6 +88,26 @@ export function ChatPanel({
       .on("presence", { event: "sync" }, updateMembers)
       .on("presence", { event: "join" }, updateMembers)
       .on("presence", { event: "leave" }, updateMembers)
+      .on(
+        "broadcast",
+        { event: "typing-start" },
+        ({ payload }: { payload: { name: string; userId: string } }) => {
+          if (payload.userId === userId) return;
+          setTypingUsers((prev) => new Set(prev).add(payload.name));
+        },
+      )
+      .on(
+        "broadcast",
+        { event: "typing-stop" },
+        ({ payload }: { payload: { name: string; userId: string } }) => {
+          if (payload.userId === userId) return;
+          setTypingUsers((prev) => {
+            const next = new Set(prev);
+            next.delete(payload.name);
+            return next;
+          });
+        },
+      )
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           await channel.track({ userId, name: displayName.trim() || "Anonymous" });
@@ -84,9 +118,52 @@ export function ChatPanel({
     return () => {
       void channel.untrack();
       void channel.unsubscribe();
+      presenceChannelRef.current = null;
       setActiveMembers([]);
+      setTypingUsers(new Set());
     };
   }, [displayName, space, userId]);
+
+  const handleTyping = (val: string) => {
+    setText(val);
+    if (!presenceChannelRef.current) return;
+    const name = displayName.trim() || "Anonymous";
+
+    if (val.trim().length > 0) {
+      void presenceChannelRef.current.send({
+        type: "broadcast",
+        event: "typing-start",
+        payload: { name, userId },
+      });
+
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = setTimeout(() => {
+        void presenceChannelRef.current?.send({
+          type: "broadcast",
+          event: "typing-stop",
+          payload: { name, userId },
+        });
+      }, 2500);
+    } else {
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      void presenceChannelRef.current.send({
+        type: "broadcast",
+        event: "typing-stop",
+        payload: { name, userId },
+      });
+    }
+  };
+
+  const handleScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const isUp = el.scrollHeight - el.scrollTop - el.clientHeight > 150;
+    setShowScrollBottom(isUp);
+  };
+
+  const scrollToBottom = () => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
 
   const shareSpace = async () => {
     const url = `${window.location.origin}${window.location.pathname}?space=${encodeURIComponent(space?.code ?? "")}`;
@@ -140,6 +217,16 @@ export function ChatPanel({
     );
   }
 
+  const filteredMessages = messages.filter((m) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      m.text?.toLowerCase().includes(q) ||
+      m.authorName?.toLowerCase().includes(q) ||
+      m.fileName?.toLowerCase().includes(q)
+    );
+  });
+
   const push = async (
     kind: MediaKind,
     extra: Partial<Omit<Message, "id" | "createdAt" | "authorId" | "authorName">>,
@@ -151,6 +238,14 @@ export function ChatPanel({
   const submitText = async () => {
     const value = text.trim();
     if (!value) return;
+    if (presenceChannelRef.current) {
+      void presenceChannelRef.current.send({
+        type: "broadcast",
+        event: "typing-stop",
+        payload: { name: displayName.trim() || "Anonymous", userId },
+      });
+    }
+
     if (editing) {
       const updated = await editMessage(editing.id, space.id, value);
       if (updated) {
@@ -228,52 +323,93 @@ export function ChatPanel({
     }
   };
 
+  const typingArray = Array.from(typingUsers);
+
   return (
     <section className="chat-canvas flex h-full min-w-0 flex-1 flex-col">
-      <header className="flex items-center gap-3 border-b border-border bg-sidebar px-4 py-3">
-        <button
-          type="button"
-          onClick={onOpenSidebar}
-          className="rounded-lg bg-card p-2 md:hidden"
-          aria-label="Open spaces"
-        >
-          <Menu className="size-4" />
-        </button>
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-semibold">{space.name}</h2>
-          <p className="text-[11px] text-muted-foreground">
-            Space Code <span className="font-mono text-primary">{space.code}</span>
-          </p>
-          <p className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
-            <span className="size-1.5 rounded-full bg-primary" />
-            {activeMembers.length} active
-            {activeMembers.length > 0 && <span aria-label="Active members">· {activeMembers.join(", ")}</span>}
-          </p>
+      <header className="flex flex-col border-b border-border bg-sidebar px-4 py-3">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onOpenSidebar}
+            className="rounded-lg bg-card p-2 md:hidden"
+            aria-label="Open spaces"
+          >
+            <Menu className="size-4" />
+          </button>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-sm font-semibold">{space.name}</h2>
+            <p className="text-[11px] text-muted-foreground">
+              Space Code <span className="font-mono text-primary">{space.code}</span>
+            </p>
+            <p className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+              <span className="size-1.5 rounded-full bg-primary" />
+              {activeMembers.length} active
+              {activeMembers.length > 0 && <span aria-label="Active members">· {activeMembers.join(", ")}</span>}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowSearch((v) => !v)}
+            title="Search messages"
+            className={
+              "rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors " +
+              (showSearch ? "text-primary ring-1 ring-primary" : "")
+            }
+          >
+            <Search className="size-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => void shareSpace()}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-medium transition-colors hover:text-primary"
+          >
+            <Share2 className="size-3.5" />
+            <span className="hidden sm:inline">Share invite</span>
+            <span className="sm:hidden">Share</span>
+          </button>
+          <IconBtn label="Start voice call" onClick={() => setCallMode("voice")}>
+            <Phone className="size-3.5" />
+          </IconBtn>
+          <IconBtn label="Start video call" onClick={() => setCallMode("video")}>
+            <Video className="size-3.5" />
+          </IconBtn>
         </div>
-        <button
-          type="button"
-          onClick={() => void shareSpace()}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-medium transition-colors hover:text-primary"
-        >
-          <Share2 className="size-3.5" />
-          <span className="hidden sm:inline">Share invite</span>
-          <span className="sm:hidden">Share</span>
-        </button>
-        <IconBtn label="Start voice call" onClick={() => setCallMode("voice")}>
-          <Phone className="size-3.5" />
-        </IconBtn>
-        <IconBtn label="Start video call" onClick={() => setCallMode("video")}>
-          <Video className="size-3.5" />
-        </IconBtn>
+
+        {showSearch && (
+          <div className="mt-2.5 flex items-center gap-2 rounded-xl bg-card px-3 py-1.5 border border-border animate-in fade-in duration-150">
+            <Search className="size-3.5 text-muted-foreground" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search in this space..."
+              className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
       </header>
 
-      <div className="thin-scroll flex-1 space-y-3 overflow-y-auto p-4">
-        {messages.length === 0 && (
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="thin-scroll relative flex-1 space-y-3 overflow-y-auto p-4"
+      >
+        {filteredMessages.length === 0 && (
           <p className="py-10 text-center text-xs text-muted-foreground">
-            No messages yet — send text, images, video, voice notes or documents.
+            {searchQuery ? "No messages matching your search." : "No messages yet — send text, images, video, voice notes or documents."}
           </p>
         )}
-        {messages.map((m) => (
+        {filteredMessages.map((m) => (
           <MessageBubble
             key={m.id}
             message={m}
@@ -294,9 +430,29 @@ export function ChatPanel({
           />
         ))}
         <div ref={bottomRef} />
+
+        {showScrollBottom && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            className="sticky bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground shadow-2xl transition-transform hover:scale-105 animate-in fade-in duration-150"
+          >
+            <ArrowDown className="size-3.5" />
+            <span>Latest messages</span>
+          </button>
+        )}
       </div>
 
       <footer className="border-t border-border bg-sidebar p-3">
+        {typingArray.length > 0 && (
+          <div className="mb-2 flex items-center gap-2 px-1 text-xs text-muted-foreground italic animate-pulse">
+            <span className="size-2 rounded-full bg-primary animate-ping" />
+            <span>
+              {typingArray.join(", ")} {typingArray.length === 1 ? "is" : "are"} typing...
+            </span>
+          </div>
+        )}
+
         {editing && (
           <div className="mb-2 flex items-center justify-between rounded-lg bg-secondary px-3 py-2 text-xs text-muted-foreground">
             <span>Editing message</span>
@@ -326,7 +482,7 @@ export function ChatPanel({
           </div>
           <textarea
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => handleTyping(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
