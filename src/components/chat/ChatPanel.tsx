@@ -33,6 +33,7 @@ import {
   Lock,
   Unlock,
   KeyRound,
+  MapPin,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -612,6 +613,28 @@ export function ChatPanel({
     }
   };
 
+  const handleShareLocation = () => {
+    if (typeof window === "undefined" || !navigator.geolocation) {
+      toast.error("Geolocation is not supported by your browser");
+      return;
+    }
+    toast.info("Acquiring GPS location...");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        void push("location", {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          locationName: "Current GPS Location",
+        });
+        toast.success("Location shared!");
+      },
+      (err) => {
+        toast.error(`Location access error: ${err.message}`);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
   const typingArray = Array.from(typingUsers);
 
   const getWallpaperStyle = () => {
@@ -1072,6 +1095,9 @@ export function ChatPanel({
             </IconBtn>
             <IconBtn label="Send audio file" onClick={() => audioInputRef.current?.click()}>
               <AudioLines className="size-4" />
+            </IconBtn>
+            <IconBtn label="Share Location" onClick={handleShareLocation}>
+              <MapPin className="size-4 text-emerald-400" />
             </IconBtn>
             <IconBtn label="Create Poll" onClick={() => setShowPollModal(true)}>
               <BarChart2 className="size-4" />

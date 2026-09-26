@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
-export type MediaKind = "text" | "image" | "video" | "audio" | "file";
+export type MediaKind = "text" | "image" | "video" | "audio" | "file" | "location";
 
 export type Message = {
   id: string;
@@ -17,6 +17,9 @@ export type Message = {
   forwarded?: boolean;
   editedAt?: number;
   isRead?: boolean;
+  latitude?: number;
+  longitude?: number;
+  locationName?: string;
   createdAt: number;
 };
 

@@ -15,6 +15,8 @@ import {
   Trash2,
   Reply,
   Volume2,
+  MapPin,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatBytes, type Message } from "@/lib/heymama";
@@ -192,6 +194,28 @@ export function MessageBubble({
                   <Download className="size-4" />
                 </a>
               )}
+            </div>
+          )}
+
+          {message.kind === "location" && message.latitude && message.longitude && (
+            <div className="space-y-2 py-0.5">
+              <div className="flex items-center gap-2 font-semibold text-xs">
+                <MapPin className={`size-4 ${mine ? "text-primary-foreground" : "text-destructive"}`} />
+                <span>{message.locationName || "Shared GPS Location"}</span>
+              </div>
+              <p className="text-[10px] opacity-85 font-mono">
+                {message.latitude.toFixed(5)}°, {message.longitude.toFixed(5)}°
+              </p>
+              <a
+                href={`https://www.google.com/maps?q=${message.latitude},${message.longitude}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold shadow-xs transition-opacity hover:opacity-90 ${
+                  mine ? "bg-primary-foreground text-primary" : "bg-primary text-primary-foreground"
+                }`}
+              >
+                <ExternalLink className="size-3" /> Open in Google Maps
+              </a>
             </div>
           )}
 
