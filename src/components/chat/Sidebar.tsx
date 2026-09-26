@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Copy, Hash, LogOut, Palette, Plus, RefreshCw, Smile, Users, Check } from "lucide-react";
+import { Copy, Hash, LogOut, Palette, Plus, RefreshCw, Users } from "lucide-react";
 import { toast } from "sonner";
 import {
   createSpace,
@@ -14,7 +14,6 @@ import {
 } from "@/lib/heymama";
 
 type Theme = "dark" | "light" | "cyberpunk" | "sunset";
-type Accent = "cyan" | "emerald" | "violet" | "gold" | "rose";
 
 const THEMES: { id: Theme; label: string; icon: string }[] = [
   { id: "dark", label: "Midnight", icon: "🌙" },
@@ -22,16 +21,6 @@ const THEMES: { id: Theme; label: string; icon: string }[] = [
   { id: "cyberpunk", label: "Cyberpunk", icon: "⚡" },
   { id: "sunset", label: "Sunset", icon: "🌅" },
 ];
-
-const ACCENTS: { id: Accent; label: string; color: string; hsl: string }[] = [
-  { id: "cyan", label: "Cyan", color: "#06b6d4", hsl: "188 94% 43%" },
-  { id: "emerald", label: "Emerald", color: "#10b981", hsl: "160 84% 39%" },
-  { id: "violet", label: "Violet", color: "#8b5cf6", hsl: "262 83% 58%" },
-  { id: "gold", label: "Gold", color: "#f59e0b", hsl: "38 92% 50%" },
-  { id: "rose", label: "Rose", color: "#f43f5e", hsl: "343 89% 60%" },
-];
-
-const USER_STATUSES = ["🚀 Coding", "🎧 Music", "☕ Break", "💤 Away", "✨ Online"];
 
 export function Sidebar({
   userId,
@@ -52,10 +41,6 @@ export function Sidebar({
   const [newName, setNewName] = useState("");
   const [restoreId, setRestoreId] = useState("");
   const [showRestore, setShowRestore] = useState(false);
-  const [userStatus, setUserStatus] = useState<string>(() => {
-    return localStorage.getItem("heymamaey.userStatus") || "✨ Online";
-  });
-  const [showStatusMenu, setShowStatusMenu] = useState(false);
 
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window !== "undefined") {
@@ -64,33 +49,12 @@ export function Sidebar({
     return "dark";
   });
 
-  const [accent, setAccent] = useState<Accent>(() => {
-    return (localStorage.getItem("heymamaey.accent") as Accent) || "cyan";
-  });
-
   useEffect(() => {
     if (typeof document !== "undefined") {
       document.documentElement.setAttribute("data-theme", theme);
       localStorage.setItem("heymamaey.theme", theme);
     }
   }, [theme]);
-
-  useEffect(() => {
-    if (typeof document !== "undefined") {
-      const selected = ACCENTS.find((a) => a.id === accent);
-      if (selected) {
-        document.documentElement.style.setProperty("--primary", selected.hsl);
-        localStorage.setItem("heymamaey.accent", accent);
-      }
-    }
-  }, [accent]);
-
-  const selectStatus = (st: string) => {
-    setUserStatus(st);
-    localStorage.setItem("heymamaey.userStatus", st);
-    setShowStatusMenu(false);
-    toast.success(`Status updated to ${st}`);
-  };
 
   const copyId = async () => {
     try {
@@ -167,30 +131,12 @@ export function Sidebar({
           </div>
         </div>
 
-        {/* Theme & Accent Customizer */}
-        <div className="mt-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-              <Palette className="size-3" />
-              <span>Theme & Accent</span>
-            </div>
-            <div className="flex items-center gap-1">
-              {ACCENTS.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => setAccent(a.id)}
-                  title={`Accent: ${a.label}`}
-                  className={
-                    "size-4 rounded-full transition-transform " +
-                    (accent === a.id ? "scale-125 ring-2 ring-primary ring-offset-1 ring-offset-background" : "hover:scale-110 opacity-75")
-                  }
-                  style={{ backgroundColor: a.color }}
-                />
-              ))}
-            </div>
+        {/* Theme Picker */}
+        <div className="mt-3">
+          <div className="mb-1.5 flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <Palette className="size-3" />
+            <span>Theme</span>
           </div>
-
           <div className="grid grid-cols-4 gap-1 rounded-xl bg-card p-1 border border-border">
             {THEMES.map((t) => (
               <button
@@ -213,35 +159,9 @@ export function Sidebar({
         </div>
 
         <div className="mt-3 rounded-xl bg-card p-3 glow-ring">
-          <div className="flex items-center justify-between">
-            <label htmlFor="display-name" className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Your name
-            </label>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowStatusMenu((v) => !v)}
-                className="inline-flex items-center gap-1 rounded-full bg-secondary/80 px-2 py-0.5 text-[10px] font-semibold text-primary transition-colors hover:bg-secondary"
-              >
-                <Smile className="size-3" />
-                <span>{userStatus}</span>
-              </button>
-              {showStatusMenu && (
-                <div className="absolute right-0 top-6 z-30 w-32 rounded-xl border border-border bg-card p-1 shadow-2xl animate-in zoom-in-95 duration-150">
-                  {USER_STATUSES.map((st) => (
-                    <button
-                      key={st}
-                      type="button"
-                      onClick={() => selectStatus(st)}
-                      className="flex w-full items-center rounded-lg px-2 py-1 text-[11px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-                    >
-                      {st}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+          <label htmlFor="display-name" className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Your name
+          </label>
           <input
             id="display-name"
             value={displayName === "You" ? "" : displayName}
@@ -250,8 +170,8 @@ export function Sidebar({
             maxLength={40}
             className="mt-1 w-full rounded-lg bg-background px-2.5 py-2 text-sm outline-none ring-1 ring-input focus:ring-primary"
           />
-          <p className="mt-2 text-[10px] uppercase tracking-wider text-muted-foreground">Your ID</p>
-          <p className="mt-0.5 font-mono text-sm font-semibold text-primary">{userId}</p>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Your ID</p>
+          <p className="mt-1 font-mono text-sm font-semibold text-primary">{userId}</p>
           <div className="mt-2 flex gap-2">
             <button
               type="button"
@@ -361,9 +281,7 @@ export function Sidebar({
             key={s.id}
             className={
               "group mb-1 flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors " +
-              (s.id === activeSpaceId
-                ? "bg-primary/10 text-foreground glow-ring"
-                : "text-muted-foreground hover:bg-card hover:text-foreground")
+              (activeSpaceId === s.id ? "bg-secondary" : "hover:bg-secondary/60")
             }
           >
             <button
@@ -374,35 +292,24 @@ export function Sidebar({
               }}
               className="flex min-w-0 flex-1 items-center gap-3 text-left"
             >
-              <div
-                className={
-                  "flex size-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold transition-colors " +
-                  (s.id === activeSpaceId
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-card text-muted-foreground group-hover:text-foreground")
-                }
-              >
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
                 <Hash className="size-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-1">
-                  <p className="truncate text-xs font-semibold text-foreground">{s.name}</p>
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-baseline justify-between gap-2">
+                  <span className="truncate text-sm font-medium">{s.name}</span>
                   <span className="shrink-0 font-mono text-[10px] text-primary">{s.code}</span>
-                </div>
-                <p className="truncate text-[11px] text-muted-foreground">{lastOf(s.id)}</p>
-              </div>
+                </span>
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  {lastOf(s.id)}
+                </span>
+              </span>
             </button>
             <button
               type="button"
-              onClick={async () => {
-                if (!window.confirm(`Leave "${s.name}"?`)) return;
-                const ok = await leaveSpace(s.id);
-                toast[ok ? "success" : "error"](
-                  ok ? `Left ${s.name}` : "Couldn't leave Space",
-                );
-              }}
+              onClick={() => leaveSpace(s.id)}
               aria-label={`Leave ${s.name}`}
-              className="opacity-0 group-hover:opacity-100 rounded-lg p-1.5 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive"
+              className="opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
             >
               <LogOut className="size-3.5" />
             </button>
