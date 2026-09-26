@@ -9,6 +9,9 @@ import {
   setDisplayName,
   setActiveSpace,
   signInWithId,
+  useChatState,
+  getUnreadCount,
+  markSpaceAsRead,
   type Message,
   type Space,
 } from "@/lib/heymama";
@@ -357,58 +360,69 @@ export function Sidebar({
             No Spaces yet. Create one or join with a Space Number.
           </p>
         )}
-        {spaces.map((s) => (
-          <div
-            key={s.id}
-            className={
-              "group mb-1 flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors " +
-              (s.id === activeSpaceId
-                ? "bg-primary/10 text-foreground glow-ring"
-                : "text-muted-foreground hover:bg-card hover:text-foreground")
-            }
-          >
-            <button
-              type="button"
-              onClick={() => {
-                setActiveSpace(s.id);
-                onNavigate?.();
-              }}
-              className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        {spaces.map((s) => {
+          const chatState = useChatState();
+          const unread = getUnreadCount(s.id, messages, userId, chatState.readTimestamps);
+
+          return (
+            <div
+              key={s.id}
+              className={
+                "group mb-1 flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors " +
+                (s.id === activeSpaceId
+                  ? "bg-primary/10 text-foreground glow-ring"
+                  : "text-muted-foreground hover:bg-card hover:text-foreground")
+              }
             >
-              <div
-                className={
-                  "flex size-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold transition-colors " +
-                  (s.id === activeSpaceId
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-card text-muted-foreground group-hover:text-foreground")
-                }
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveSpace(s.id);
+                  markSpaceAsRead(s.id);
+                  onNavigate?.();
+                }}
+                className="flex min-w-0 flex-1 items-center gap-3 text-left"
               >
-                <Hash className="size-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-1">
-                  <p className="truncate text-xs font-semibold text-foreground">{s.name}</p>
-                  <span className="shrink-0 font-mono text-[10px] text-primary">{s.code}</span>
+                <div
+                  className={
+                    "flex size-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold transition-colors " +
+                    (s.id === activeSpaceId
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-card text-muted-foreground group-hover:text-foreground")
+                  }
+                >
+                  <Hash className="size-4" />
                 </div>
-                <p className="truncate text-[11px] text-muted-foreground">{lastOf(s.id)}</p>
-              </div>
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                if (!window.confirm(`Leave "${s.name}"?`)) return;
-                const ok = await leaveSpace(s.id);
-                toast[ok ? "success" : "error"](
-                  ok ? `Left ${s.name}` : "Couldn't leave Space",
-                );
-              }}
-              aria-label={`Leave ${s.name}`}
-              className="opacity-0 group-hover:opacity-100 rounded-lg p-1.5 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive"
-            >
-              <LogOut className="size-3.5" />
-            </button>
-          </div>
-        ))}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-1">
+                    <p className="truncate text-xs font-semibold text-foreground">{s.name}</p>
+                    <span className="shrink-0 font-mono text-[10px] text-primary">{s.code}</span>
+                  </div>
+                  <p className="truncate text-[11px] text-muted-foreground">{lastOf(s.id)}</p>
+                </div>
+                {unread > 0 && (
+                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary font-mono text-[10px] font-bold text-primary-foreground shadow-sm">
+                    {unread > 99 ? "99+" : unread}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!window.confirm(`Leave "${s.name}"?`)) return;
+                  const ok = await leaveSpace(s.id);
+                  toast[ok ? "success" : "error"](
+                    ok ? `Left ${s.name}` : "Couldn't leave Space",
+                  );
+                }}
+                aria-label={`Leave ${s.name}`}
+                className="opacity-0 group-hover:opacity-100 rounded-lg p-1.5 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive"
+              >
+                <LogOut className="size-3.5" />
+              </button>
+            </div>
+          );
+        })}
       </div>
     </aside>
   );

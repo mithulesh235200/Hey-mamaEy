@@ -132,6 +132,7 @@ export function ChatPanel({
   const [showDisappearingMenu, setShowDisappearingMenu] = useState(false);
   const [showWallpaperMenu, setShowWallpaperMenu] = useState(false);
   const [showSnippetsMenu, setShowSnippetsMenu] = useState(false);
+  const [showGifsMenu, setShowGifsMenu] = useState(false);
   const [showGalleryModal, setShowGalleryModal] = useState(false);
   const [activeMediaTab, setActiveMediaTab] = useState<MediaTab>("all");
 
@@ -188,14 +189,30 @@ export function ChatPanel({
   }, [space?.id]);
 
   useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      void Notification.requestPermission();
+    }
+  }, []);
+
+  useEffect(() => {
     if (messages.length > lastMsgCountRef.current) {
       const last = messages[messages.length - 1];
       if (last && last.authorId !== userId) {
         playChime("receive", mutedSound);
+        if (typeof window !== "undefined" && document.hidden && "Notification" in window && Notification.permission === "granted") {
+          try {
+            new Notification(`New message in ${space?.name || "Space"}`, {
+              body: `${last.authorName}: ${last.text || last.fileName || "Shared media"}`,
+              icon: "/heymama.jpeg",
+            });
+          } catch {
+            /* ignore notification error */
+          }
+        }
       }
     }
     lastMsgCountRef.current = messages.length;
-  }, [messages, userId, mutedSound]);
+  }, [messages, userId, mutedSound, space?.name]);
 
   const unlockSpace = () => {
     if (pinInput === spacePin) {
@@ -938,6 +955,47 @@ export function ChatPanel({
                 {charCount} chars · {wordCount} words
               </span>
             )}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowGifsMenu((v) => !v)}
+                className="inline-flex items-center gap-1 rounded-full bg-card px-2.5 py-1 text-[11px] font-semibold text-primary border border-border hover:bg-secondary transition-colors"
+              >
+                <span>🖼️ GIFs & Stickers</span>
+              </button>
+
+              {showGifsMenu && (
+                <div className="absolute right-0 bottom-8 z-40 w-64 rounded-2xl border border-border bg-card p-2 shadow-2xl animate-in zoom-in-95 duration-150 space-y-2">
+                  <div className="px-2 py-0.5 text-[10px] uppercase font-bold text-muted-foreground">GIFs & Animated Stickers</div>
+                  <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto thin-scroll p-1">
+                    {[
+                      { label: "Party 🎉", url: "https://media.giphy.com/media/l2JIdnF6aJnAqzmy4/giphy.gif" },
+                      { label: "Mindblown 🤯", url: "https://media.giphy.com/media/26ufdipQqU2lhNA4g/giphy.gif" },
+                      { label: "High Five 🙌", url: "https://media.giphy.com/media/3oEJHV0z8S7WM4MwnK/giphy.gif" },
+                      { label: "Dance 💃", url: "https://media.giphy.com/media/l3vRlT2k2L35CboWY/giphy.gif" },
+                      { label: "Cat Vibe 🐱", url: "https://media.giphy.com/media/GeimqsH0TLDt4tScGw/giphy.gif" },
+                      { label: "Applause 👏", url: "https://media.giphy.com/media/g9582DNuQppxC/giphy.gif" },
+                      { label: "Cool 😎", url: "https://media.giphy.com/media/l41YkxvU8c7J7Bba0/giphy.gif" },
+                      { label: "Shocked 😱", url: "https://media.giphy.com/media/LpLd2NGvOtAXVAkEFz/giphy.gif" },
+                    ].map((gif) => (
+                      <button
+                        key={gif.url}
+                        type="button"
+                        onClick={() => {
+                          setShowGifsMenu(false);
+                          void push("image", { dataUrl: gif.url, fileName: `${gif.label}.gif` });
+                        }}
+                        className="group relative overflow-hidden rounded-xl border border-border bg-secondary/50 p-1 hover:border-primary transition-all"
+                      >
+                        <img src={gif.url} alt={gif.label} className="h-16 w-full object-cover rounded-lg group-hover:scale-105 transition-transform" />
+                        <span className="mt-0.5 block truncate text-[9px] font-semibold text-center">{gif.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="relative">
               <button
                 type="button"

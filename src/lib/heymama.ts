@@ -15,6 +15,8 @@ export type Message = {
   fileSize?: number;
   mimeType?: string;
   forwarded?: boolean;
+  editedAt?: number;
+  isRead?: boolean;
   createdAt: number;
 };
 
@@ -31,6 +33,8 @@ export type State = {
   spaces: Space[];
   messages: Message[];
   activeSpaceId: string | null;
+  typingMap: Record<string, Record<string, string>>; // spaceId -> { userId: userName }
+  readTimestamps: Record<string, number>; // spaceId -> lastReadTime
   ready: boolean;
 };
 
@@ -57,6 +61,8 @@ const initialState: State = {
   spaces: [],
   messages: [],
   activeSpaceId: null,
+  typingMap: {},
+  readTimestamps: {},
   ready: false,
 };
 
@@ -507,5 +513,38 @@ export function formatTime(ts: number) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+export function setTypingStatus(spaceId: string, userId: string, userName: string, isTyping: boolean) {
+  const currentMap = state.typingMap[spaceId] || {};
+  const nextSpaceMap = { ...currentMap };
+  if (isTyping) {
+    nextSpaceMap[userId] = userName;
+  } else {
+    delete nextSpaceMap[userId];
+  }
+  set({
+    typingMap: {
+      ...state.typingMap,
+      [spaceId]: nextSpaceMap,
+    },
+  });
+}
+
+export function markSpaceAsRead(spaceId: string) {
+  set({
+    readTimestamps: {
+      ...state.readTimestamps,
+      [spaceId]: Date.now(),
+    },
+  });
+}
+
+export function getUnreadCount(spaceId: string, messages: Message[], userId: string, readTimestamps: Record<string, number> = {}): number {
+  if (!spaceId) return 0;
+  const lastRead = readTimestamps[spaceId] || 0;
+  return messages.filter(
+    (m) => m.spaceId === spaceId && m.authorId !== userId && m.createdAt > lastRead
+  ).length;
 }
 

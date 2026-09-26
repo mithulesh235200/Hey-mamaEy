@@ -61,20 +61,23 @@ export function AudioMessage({ dataUrl, mine }: { dataUrl: string; mine?: boolea
           {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
         </button>
 
-        <div className="flex flex-col min-w-28">
-          <div className="flex h-3 items-center gap-0.5">
-            {[40, 75, 30, 90, 60, 100, 45, 80, 50, 95, 35, 70, 85, 40].map((h, i) => (
+        <div className="flex flex-col min-w-32">
+          <div className="flex h-5 items-center gap-0.5">
+            {[35, 75, 45, 95, 60, 100, 50, 85, 40, 90, 30, 80, 65, 45, 70, 90, 55, 60].map((h, i) => (
               <span
                 key={i}
-                className={`w-0.5 rounded-full transition-all ${
+                className={`w-0.5 rounded-full transition-all duration-150 ${
                   playing ? "animate-pulse" : ""
-                } ${mine ? "bg-primary-foreground/75" : "bg-primary/75"}`}
-                style={{ height: `${h}%` }}
+                } ${mine ? "bg-primary-foreground" : "bg-primary"}`}
+                style={{
+                  height: playing ? `${Math.max(25, (h * ((i % 3) + 1.2)) % 100)}%` : `${h}%`,
+                  opacity: mine ? 0.9 : 0.85,
+                }}
               />
             ))}
           </div>
-          <span className={`text-[10px] mt-0.5 ${mine ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
-            Voice Note
+          <span className={`text-[10px] mt-0.5 font-medium ${mine ? "text-primary-foreground/90" : "text-muted-foreground"}`}>
+            {playing ? "Playing Voice Note..." : "Voice Note"}
           </span>
         </div>
 

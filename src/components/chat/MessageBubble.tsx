@@ -216,11 +216,12 @@ export function MessageBubble({
               mine ? "text-primary-foreground/85" : "text-muted-foreground"
             }`}
           >
+            {message.editedAt && <span className="italic opacity-80">(edited)</span>}
             <span>{timeStr}</span>
             {isStarred && <Star className="size-3 text-amber-400 fill-amber-400" />}
             {mine && (
-              <span title="Delivered">
-                <CheckCheck className="size-3 opacity-90" />
+              <span title={message.isRead ? "Read" : "Delivered"}>
+                <CheckCheck className={`size-3 ${message.isRead ? "text-sky-400 fill-sky-400/20" : "opacity-90"}`} />
               </span>
             )}
           </div>
