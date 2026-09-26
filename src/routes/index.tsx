@@ -61,8 +61,8 @@ function Index() {
     : [];
 
   return (
-    <main className="flex h-screen overflow-hidden bg-background text-foreground">
-      <div className="hidden w-80 shrink-0 md:block">
+    <main className="flex h-screen h-[100dvh] overflow-hidden bg-background text-foreground">
+      <div className="hidden w-80 shrink-0 md:block border-r border-border">
         <Sidebar
           userId={state.userId}
           displayName={state.displayName}
@@ -73,8 +73,14 @@ function Index() {
       </div>
 
       {mobileOpen && (
-        <div className="fixed inset-0 z-40 flex md:hidden" onClick={() => setMobileOpen(false)}>
-          <div className="h-full w-80 max-w-[85%]" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 z-50 flex md:hidden animate-in fade-in duration-200"
+          onClick={() => setMobileOpen(false)}
+        >
+          <div
+            className="h-full w-80 max-w-[85%] shadow-2xl animate-in slide-in-from-left duration-200 bg-sidebar"
+            onClick={(e) => e.stopPropagation()}
+          >
             <Sidebar
               userId={state.userId}
               displayName={state.displayName}
@@ -84,7 +90,7 @@ function Index() {
               onNavigate={() => setMobileOpen(false)}
             />
           </div>
-          <div className="flex-1 bg-background/70 backdrop-blur-sm" />
+          <div className="flex-1 bg-black/60 backdrop-blur-xs" />
         </div>
       )}
 

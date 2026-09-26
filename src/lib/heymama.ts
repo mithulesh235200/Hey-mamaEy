@@ -333,7 +333,7 @@ export async function joinSpace(rawCode: string): Promise<Space | null> {
   return space;
 }
 
-export function leaveSpace(spaceId: string) {
+export function leaveSpace(spaceId: string): boolean {
   const space = state.spaces.find((s) => s.id === spaceId);
   if (space) {
     prefs.codes = prefs.codes.filter((c) => c !== space.code);
@@ -344,6 +344,7 @@ export function leaveSpace(spaceId: string) {
     messages: state.messages.filter((m) => m.spaceId !== spaceId),
     activeSpaceId: state.activeSpaceId === spaceId ? null : state.activeSpaceId,
   });
+  return Boolean(space);
 }
 
 export function setActiveSpace(spaceId: string | null) {

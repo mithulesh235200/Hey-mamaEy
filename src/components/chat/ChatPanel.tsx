@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Image as ImageIcon,
   Menu,
+  ChevronLeft,
   Mic,
   Paperclip,
   Phone,
@@ -654,169 +655,170 @@ export function ChatPanel({
 
   return (
     <section className="chat-canvas flex h-full min-w-0 flex-1 flex-col" style={getWallpaperStyle()}>
-      <header className="flex flex-col border-b border-border bg-sidebar px-4 py-3">
-        <div className="flex items-center gap-3">
+      <header className="flex flex-col border-b border-border bg-sidebar px-3 py-2.5 sm:px-4 sm:py-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           <button
             type="button"
             onClick={onOpenSidebar}
-            className="rounded-lg bg-card p-2 md:hidden"
-            aria-label="Open spaces"
+            className="inline-flex items-center gap-1 rounded-xl bg-primary px-2.5 py-1.5 text-xs font-bold text-primary-foreground shadow-xs transition-opacity hover:opacity-90 md:hidden shrink-0"
+            aria-label="Open spaces menu"
           >
-            <Menu className="size-4" />
+            <ChevronLeft className="size-4" />
+            <span>Spaces</span>
           </button>
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-sm font-semibold">{space.name}</h2>
-            <p className="text-[11px] text-muted-foreground">
-              Space Code <span className="font-mono text-primary">{space.code}</span>
-            </p>
-            <p className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
-              <span className="size-1.5 rounded-full bg-primary" />
-              {activeMembers.length} active
-              {activeMembers.length > 0 && <span aria-label="Active members">· {activeMembers.join(", ")}</span>}
-            </p>
+            <h2 className="truncate text-sm font-bold text-foreground">{space.name}</h2>
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+              <span className="font-mono text-primary font-semibold">Code: {space.code}</span>
+              <span className="flex items-center gap-1">
+                <span className="size-1.5 rounded-full bg-emerald-400" />
+                {activeMembers.length} active
+              </span>
+            </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setShowPinSetup((v) => !v)}
-            title={spacePin ? "Lock Space / PIN Settings" : "Set Space PIN Lock"}
-            className={
-              "rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors " +
-              (spacePin ? "text-primary" : "")
-            }
-          >
-            {spacePin ? <Lock className="size-4 text-primary" /> : <Unlock className="size-4" />}
-          </button>
-
-          <div className="relative">
+          <div className="flex items-center gap-1 overflow-x-auto thin-scroll max-w-[50%] sm:max-w-none">
             <button
               type="button"
-              onClick={() => setShowDisappearingMenu((v) => !v)}
-              title="Disappearing Messages"
+              onClick={() => setShowPinSetup((v) => !v)}
+              title={spacePin ? "Lock Space / PIN Settings" : "Set Space PIN Lock"}
               className={
-                "rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors " +
-                (disappearingTimer !== "off" ? "text-primary ring-1 ring-primary" : "")
+                "rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0 " +
+                (spacePin ? "text-primary ring-1 ring-primary/40" : "")
               }
             >
-              <Clock className="size-4" />
+              {spacePin ? <Lock className="size-4 text-primary" /> : <Unlock className="size-4" />}
             </button>
-            {showDisappearingMenu && (
-              <div className="absolute right-0 top-10 z-40 w-40 rounded-xl border border-border bg-card p-1.5 shadow-2xl animate-in zoom-in-95 duration-150">
-                <div className="px-2 py-1 text-[10px] uppercase font-bold text-muted-foreground">Auto-destruct</div>
-                {(["off", "24h", "7d", "30d"] as DisappearingTimer[]).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => changeDisappearingTimer(t)}
-                    className={
-                      "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors " +
-                      (disappearingTimer === t ? "bg-primary text-primary-foreground font-semibold" : "hover:bg-secondary text-muted-foreground")
-                    }
-                  >
-                    <span>{t === "off" ? "Off (Permanent)" : t}</span>
-                    {disappearingTimer === t && <Check className="size-3" />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
 
-          <button
-            type="button"
-            onClick={exportChatHistory}
-            title="Export Chat Backup"
-            className="rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors"
-          >
-            <FileDown className="size-4" />
-          </button>
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowDisappearingMenu((v) => !v)}
+                title="Disappearing Messages"
+                className={
+                  "rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors " +
+                  (disappearingTimer !== "off" ? "text-primary ring-1 ring-primary" : "")
+                }
+              >
+                <Clock className="size-4" />
+              </button>
+              {showDisappearingMenu && (
+                <div className="absolute right-0 top-10 z-40 w-40 rounded-xl border border-border bg-card p-1.5 shadow-2xl animate-in zoom-in-95 duration-150">
+                  <div className="px-2 py-1 text-[10px] uppercase font-bold text-muted-foreground">Auto-destruct</div>
+                  {(["off", "24h", "7d", "30d"] as DisappearingTimer[]).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => changeDisappearingTimer(t)}
+                      className={
+                        "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors " +
+                        (disappearingTimer === t ? "bg-primary text-primary-foreground font-semibold" : "hover:bg-secondary text-muted-foreground")
+                      }
+                    >
+                      <span>{t === "off" ? "Off (Permanent)" : t}</span>
+                      {disappearingTimer === t && <Check className="size-3" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
-          <button
-            type="button"
-            onClick={() => setShowGalleryModal(true)}
-            title="Space Media Gallery"
-            className="rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors"
-          >
-            <FolderOpen className="size-4" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setMutedSound((v) => !v)}
-            title={mutedSound ? "Unmute sounds" : "Mute sounds"}
-            className="rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors"
-          >
-            {mutedSound ? <VolumeX className="size-4 text-destructive" /> : <Volume2 className="size-4 text-primary" />}
-          </button>
-
-          <div className="relative">
             <button
               type="button"
-              onClick={() => setShowWallpaperMenu((v) => !v)}
-              title="Chat Wallpaper"
-              className="rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors"
+              onClick={exportChatHistory}
+              title="Export Chat Backup"
+              className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0"
             >
-              <Sparkles className="size-4" />
+              <FileDown className="size-4" />
             </button>
-            {showWallpaperMenu && (
-              <div className="absolute right-0 top-10 z-40 w-36 rounded-xl border border-border bg-card p-1.5 shadow-2xl animate-in zoom-in-95 duration-150">
-                {(["default", "dots", "grid", "cosmic"] as WallpaperStyle[]).map((w) => (
-                  <button
-                    key={w}
-                    type="button"
-                    onClick={() => changeWallpaper(w)}
-                    className={
-                      "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs capitalize transition-colors " +
-                      (wallpaper === w ? "bg-primary text-primary-foreground font-semibold" : "hover:bg-secondary text-muted-foreground")
-                    }
-                  >
-                    <span>{w}</span>
-                    {wallpaper === w && <Check className="size-3" />}
-                  </button>
-                ))}
-              </div>
-            )}
+
+            <button
+              type="button"
+              onClick={() => setShowGalleryModal(true)}
+              title="Space Media Gallery"
+              className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0"
+            >
+              <FolderOpen className="size-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMutedSound((v) => !v)}
+              title={mutedSound ? "Unmute sounds" : "Mute sounds"}
+              className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0"
+            >
+              {mutedSound ? <VolumeX className="size-4 text-destructive" /> : <Volume2 className="size-4 text-primary" />}
+            </button>
+
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowWallpaperMenu((v) => !v)}
+                title="Chat Wallpaper"
+                className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors"
+              >
+                <Sparkles className="size-4" />
+              </button>
+              {showWallpaperMenu && (
+                <div className="absolute right-0 top-10 z-40 w-36 rounded-xl border border-border bg-card p-1.5 shadow-2xl animate-in zoom-in-95 duration-150">
+                  {(["default", "dots", "grid", "cosmic"] as WallpaperStyle[]).map((w) => (
+                    <button
+                      key={w}
+                      type="button"
+                      onClick={() => changeWallpaper(w)}
+                      className={
+                        "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs capitalize transition-colors " +
+                        (wallpaper === w ? "bg-primary text-primary-foreground font-semibold" : "hover:bg-secondary text-muted-foreground")
+                      }
+                    >
+                      <span>{w}</span>
+                      {wallpaper === w && <Check className="size-3" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowStarredModal(true)}
+              title="Starred Messages"
+              className="relative rounded-xl bg-card p-2 text-muted-foreground hover:text-amber-400 transition-colors shrink-0"
+            >
+              <Star className="size-4" />
+              {starredIds.size > 0 && (
+                <span className="absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-amber-500 font-mono text-[9px] font-bold text-black shadow-sm">
+                  {starredIds.size}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowSearch((v) => !v)}
+              title="Search messages"
+              className={
+                "rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0 " +
+                (showSearch ? "text-primary ring-1 ring-primary" : "")
+              }
+            >
+              <Search className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => void shareSpace()}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-secondary px-2.5 py-2 text-xs font-semibold transition-colors hover:text-primary shrink-0"
+            >
+              <Share2 className="size-3.5" />
+              <span className="hidden sm:inline">Share</span>
+            </button>
+            <IconBtn label="Start voice call" onClick={() => setCallMode("voice")} className="shrink-0">
+              <Phone className="size-3.5" />
+            </IconBtn>
+            <IconBtn label="Start video call" onClick={() => setCallMode("video")} className="shrink-0">
+              <Video className="size-3.5" />
+            </IconBtn>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setShowStarredModal(true)}
-            title="Starred Messages"
-            className="relative rounded-lg bg-card p-2 text-muted-foreground hover:text-amber-400 transition-colors"
-          >
-            <Star className="size-4" />
-            {starredIds.size > 0 && (
-              <span className="absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-amber-500 font-mono text-[9px] font-bold text-black shadow-sm">
-                {starredIds.size}
-              </span>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setShowSearch((v) => !v)}
-            title="Search messages"
-            className={
-              "rounded-lg bg-card p-2 text-muted-foreground hover:text-primary transition-colors " +
-              (showSearch ? "text-primary ring-1 ring-primary" : "")
-            }
-          >
-            <Search className="size-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => void shareSpace()}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-medium transition-colors hover:text-primary"
-          >
-            <Share2 className="size-3.5" />
-            <span className="hidden sm:inline">Share invite</span>
-            <span className="sm:hidden">Share</span>
-          </button>
-          <IconBtn label="Start voice call" onClick={() => setCallMode("voice")}>
-            <Phone className="size-3.5" />
-          </IconBtn>
-          <IconBtn label="Start video call" onClick={() => setCallMode("video")}>
-            <Video className="size-3.5" />
-          </IconBtn>
         </div>
 
         {showSearch && (

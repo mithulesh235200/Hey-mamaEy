@@ -105,14 +105,14 @@ export function MessageBubble({
 
       <div className="relative flex max-w-[85%] items-end gap-1 sm:max-w-[75%]">
         <div
-          className={`relative rounded-2xl p-3 shadow-sm transition-all ${
+          className={`relative rounded-2xl p-3 shadow-md transition-all ${
             mine
-              ? "rounded-br-xs bg-primary text-primary-foreground"
-              : "rounded-bl-xs border border-border bg-card text-foreground"
+              ? "rounded-br-xs bg-primary text-primary-foreground font-medium"
+              : "rounded-bl-xs border border-border bg-card text-card-foreground font-medium"
           }`}
         >
           {message.kind === "text" && message.text && (
-            <div className="whitespace-pre-wrap break-words text-xs leading-relaxed sm:text-sm">
+            <div className="whitespace-pre-wrap break-words text-xs leading-relaxed sm:text-sm font-medium">
               {message.text}
             </div>
           )}
@@ -134,7 +134,7 @@ export function MessageBubble({
                 href={message.dataUrl}
                 download={message.fileName || `heymama-photo-${Date.now()}`}
                 className={`flex items-center gap-1 text-[11px] font-semibold hover:underline ${
-                  mine ? "text-primary-foreground/90" : "text-primary"
+                  mine ? "text-primary-foreground underline-offset-2" : "text-primary"
                 }`}
               >
                 <Download className="size-3" /> Save Photo
@@ -153,7 +153,7 @@ export function MessageBubble({
                 href={message.dataUrl}
                 download={message.fileName || `heymama-video-${Date.now()}`}
                 className={`flex items-center gap-1 text-[11px] font-semibold hover:underline ${
-                  mine ? "text-primary-foreground/90" : "text-primary"
+                  mine ? "text-primary-foreground underline-offset-2" : "text-primary"
                 }`}
               >
                 <Download className="size-3" /> Download Video
@@ -169,14 +169,14 @@ export function MessageBubble({
             <div className="flex items-center gap-3">
               <div
                 className={`flex size-10 items-center justify-center rounded-xl ${
-                  mine ? "bg-primary-foreground/15 text-primary-foreground" : "bg-secondary text-primary"
+                  mine ? "bg-primary-foreground/20 text-primary-foreground" : "bg-secondary text-primary"
                 }`}
               >
                 <FileText className="size-5" />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-medium">{message.fileName || "File"}</p>
-                <p className="text-[10px] opacity-75">
+                <p className="truncate text-xs font-semibold">{message.fileName || "File"}</p>
+                <p className="text-[10px] opacity-90 font-medium">
                   {message.fileSize ? formatBytes(message.fileSize) : "Attachment"}
                 </p>
               </div>
@@ -185,7 +185,7 @@ export function MessageBubble({
                   href={message.dataUrl}
                   download={message.fileName || "download"}
                   className={`rounded-lg p-2 transition-colors ${
-                    mine ? "hover:bg-primary-foreground/20" : "hover:bg-secondary"
+                    mine ? "hover:bg-primary-foreground/20 text-primary-foreground" : "hover:bg-secondary text-foreground"
                   }`}
                   aria-label="Download file"
                 >
@@ -202,7 +202,7 @@ export function MessageBubble({
                   <span
                     key={emoji}
                     onClick={() => toggleReaction(emoji)}
-                    className="inline-flex cursor-pointer items-center gap-0.5 rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] font-semibold shadow-xs border border-border"
+                    className="inline-flex cursor-pointer items-center gap-0.5 rounded-full bg-background/90 px-1.5 py-0.5 text-[10px] font-semibold shadow-xs border border-border"
                   >
                     <span>{emoji}</span>
                   </span>
@@ -212,15 +212,15 @@ export function MessageBubble({
           )}
 
           <div
-            className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${
-              mine ? "text-primary-foreground/75" : "text-muted-foreground"
+            className={`mt-1.5 flex items-center justify-end gap-1 text-[10px] font-medium ${
+              mine ? "text-primary-foreground/85" : "text-muted-foreground"
             }`}
           >
             <span>{timeStr}</span>
             {isStarred && <Star className="size-3 text-amber-400 fill-amber-400" />}
             {mine && (
               <span title="Delivered">
-                <CheckCheck className="size-3 text-emerald-300" />
+                <CheckCheck className="size-3 opacity-90" />
               </span>
             )}
           </div>

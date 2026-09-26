@@ -1,0 +1,78 @@
+﻿
+> build
+> vite build
+
+[90m[[90mnitro:vercel[90m][39m [36mΓä╣[39m Using [36mnodejs24.x[39m runtime.
+[90m[[90mnitro:vercel[90m][39m [36mΓä╣[39m Using [36mweb[39m entry format.
+[36mvite v8.2.1 [32mbuilding client environment for production...[36m[39m
+[2K
+transforming...Γ£ô 1939 modules transformed.
+rendering chunks...
+computing gzip size...
+.vercel/output/static/assets/styles-DSD_D0SN.css   90.03 kB Γöé gzip:  14.73 kB
+.vercel/output/static/assets/routes-DAY7JqI6.js    95.08 kB Γöé gzip:  24.20 kB
+.vercel/output/static/assets/index-DF4V-jEN.js    592.79 kB Γöé gzip: 171.78 kB
+
+[32mΓ£ô built in 1.50s[39m
+[36mvite v8.2.1 [32mbuilding ssr environment for production...[36m[39m
+[2K
+transforming...Γ£ô 67 modules transformed.
+rendering chunks...
+computing gzip size...
+node_modules/.nitro/vite/services/ssr/assets/styles-DSD_D0SN.css                      90.03 kB Γöé gzip: 14.73 kB
+node_modules/.nitro/vite/services/ssr/assets/empty-plugin-adapters-D9UWiqvJ.js         0.22 kB Γöé gzip:  0.16 kB
+node_modules/.nitro/vite/services/ssr/assets/_tanstack-start-manifest_v-Cvx9Zptn.js    0.61 kB Γöé gzip:  0.33 kB
+node_modules/.nitro/vite/services/ssr/assets/start-D-zOXLiI.js                         2.00 kB Γöé gzip:  0.88 kB
+node_modules/.nitro/vite/services/ssr/assets/createCsrfMiddleware-B2To0gPJ.js          3.19 kB Γöé gzip:  1.01 kB
+node_modules/.nitro/vite/services/ssr/index.js                                         4.61 kB Γöé gzip:  1.92 kB
+node_modules/.nitro/vite/services/ssr/assets/client-D-ioQrZ8.js                        4.65 kB Γöé gzip:  1.10 kB
+node_modules/.nitro/vite/services/ssr/assets/router-DpeK4AP_.js                        6.90 kB Γöé gzip:  2.19 kB
+node_modules/.nitro/vite/services/ssr/assets/server-BJwfRvmE.js                       56.40 kB Γöé gzip: 14.53 kB
+node_modules/.nitro/vite/services/ssr/assets/routes-Beo0Wfsd.js                      130.91 kB Γöé gzip: 26.63 kB
+
+[32mΓ£ô built in 564ms[39m
+
+[90m[[90mnitro[90m][39m [35mΓùÉ[39m Building [[35mNitro[39m] [2m(preset: [36mvercel[39m, compatibility: [36m2026-09-26[39m)[22m
+[90m[[90mnitro[90m][39m [32mΓ£ö[39m Generated public [36m.vercel/output/static[39m
+[36mvite v8.2.1 [32mbuilding nitro environment for production...[36m[39m
+[2K
+transforming...Γ£ô 1959 modules transformed.
+[36mΓä╣[39m Tracing dependencies:
+- [36mtslib[39m (2.8.1)
+[32mΓ£ö[39m Traced 1 dependencies (4 files) in 93ms.
+[36mΓä╣[39m Ensure your production environment matches the builder OS and architecture ([36mwin32-x64[39m) to avoid native module issues.
+rendering chunks...
+computing gzip size...
+.vercel/output/functions/__server.func/_ssr/empty-plugin-adapters-D9UWiqvJ.mjs    0.23 kB Γöé gzip:   0.16 kB
+.vercel/output/functions/__server.func/_chunks/ssr-renderer.mjs                   0.60 kB Γöé gzip:   0.36 kB
+.vercel/output/functions/__server.func/_tanstack-start-manifest_v-Cvx9Zptn.mjs    0.67 kB Γöé gzip:   0.36 kB
+.vercel/output/functions/__server.func/_runtime.mjs                               1.58 kB Γöé gzip:   0.74 kB
+.vercel/output/functions/__server.func/_ssr/start-D-zOXLiI.mjs                    1.89 kB Γöé gzip:   0.86 kB
+.vercel/output/functions/__server.func/_ssr/ssr.mjs                               4.57 kB Γöé gzip:   1.93 kB
+.vercel/output/functions/__server.func/_ssr/client-D-ioQrZ8.mjs                   4.70 kB Γöé gzip:   1.14 kB
+.vercel/output/functions/__server.func/index.mjs                                  7.25 kB Γöé gzip:   2.59 kB
+.vercel/output/functions/__server.func/_ssr/router-DpeK4AP_.mjs                   7.72 kB Γöé gzip:   2.33 kB
+.vercel/output/functions/__server.func/_libs/tanstack__history.mjs               12.09 kB Γöé gzip:   3.48 kB
+.vercel/output/functions/__server.func/_libs/supabase__functions-js.mjs          12.51 kB Γöé gzip:   3.45 kB
+.vercel/output/functions/__server.func/_libs/react+tanstack__react-query.mjs     17.59 kB Γöé gzip:   4.63 kB
+.vercel/output/functions/__server.func/_libs/h3-v2+rou3+srvx.mjs                 18.20 kB Γöé gzip:   4.98 kB
+.vercel/output/functions/__server.func/_libs/h3+rou3+srvx.mjs                    26.42 kB Γöé gzip:   6.94 kB
+.vercel/output/functions/__server.func/_libs/lucide-react.mjs                    29.82 kB Γöé gzip:   5.94 kB
+.vercel/output/functions/__server.func/_libs/supabase__supabase-js.mjs           36.39 kB Γöé gzip:  10.69 kB
+.vercel/output/functions/__server.func/_libs/tanstack__query-core.mjs            48.19 kB Γöé gzip:  10.70 kB
+.vercel/output/functions/__server.func/_libs/supabase__phoenix.mjs               50.54 kB Γöé gzip:  12.76 kB
+.vercel/output/functions/__server.func/_libs/sonner.mjs                          53.68 kB Γöé gzip:  12.13 kB
+.vercel/output/functions/__server.func/_ssr/server-BJwfRvmE.mjs                  58.02 kB Γöé gzip:  15.23 kB
+.vercel/output/functions/__server.func/_libs/supabase__realtime-js.mjs           80.38 kB Γöé gzip:  20.48 kB
+.vercel/output/functions/__server.func/_libs/supabase__postgrest-js.mjs         105.54 kB Γöé gzip:  21.68 kB
+.vercel/output/functions/__server.func/_libs/@supabase/storage-js+[...].mjs     119.58 kB Γöé gzip:  22.34 kB
+.vercel/output/functions/__server.func/_libs/@tanstack/router-core+[...].mjs    121.02 kB Γöé gzip:  25.46 kB
+.vercel/output/functions/__server.func/_ssr/routes-Beo0Wfsd.mjs                 144.15 kB Γöé gzip:  27.18 kB
+.vercel/output/functions/__server.func/_libs/supabase__auth-js.mjs              312.44 kB Γöé gzip:  63.67 kB
+.vercel/output/functions/__server.func/_libs/@tanstack/react-router+[...].mjs   656.57 kB Γöé gzip: 137.68 kB
+
+[32mΓ£ô built in 1.41s[39m
+[36mΓä╣[39m Generated [36m.vercel/output/nitro.json[39m
+
+[90m[[90mnitro[90m][39m [32mΓ£ö[39m You can preview this build using [36mnpx vite preview[39m
+[90m[[90mnitro[90m][39m [32mΓ£ö[39m You can deploy this build using [36mnpx nitro deploy --prebuilt[39m

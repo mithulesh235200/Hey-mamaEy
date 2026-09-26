@@ -23,12 +23,12 @@ const THEMES: { id: Theme; label: string; icon: string }[] = [
   { id: "sunset", label: "Sunset", icon: "🌅" },
 ];
 
-const ACCENTS: { id: Accent; label: string; color: string; hsl: string }[] = [
-  { id: "cyan", label: "Cyan", color: "#06b6d4", hsl: "188 94% 43%" },
-  { id: "emerald", label: "Emerald", color: "#10b981", hsl: "160 84% 39%" },
-  { id: "violet", label: "Violet", color: "#8b5cf6", hsl: "262 83% 58%" },
-  { id: "gold", label: "Gold", color: "#f59e0b", hsl: "38 92% 50%" },
-  { id: "rose", label: "Rose", color: "#f43f5e", hsl: "343 89% 60%" },
+const ACCENTS: { id: Accent; label: string; color: string; hsl: string; fg: string }[] = [
+  { id: "cyan", label: "Cyan", color: "#06b6d4", hsl: "hsl(188 94% 43%)", fg: "#ffffff" },
+  { id: "emerald", label: "Emerald", color: "#10b981", hsl: "hsl(160 84% 39%)", fg: "#ffffff" },
+  { id: "violet", label: "Violet", color: "#8b5cf6", hsl: "hsl(262 83% 58%)", fg: "#ffffff" },
+  { id: "gold", label: "Gold", color: "#f59e0b", hsl: "hsl(38 92% 48%)", fg: "#000000" },
+  { id: "rose", label: "Rose", color: "#f43f5e", hsl: "hsl(343 89% 60%)", fg: "#ffffff" },
 ];
 
 const USER_STATUSES = ["🚀 Coding", "🎧 Music", "☕ Break", "💤 Away", "✨ Online"];
@@ -80,6 +80,7 @@ export function Sidebar({
       const selected = ACCENTS.find((a) => a.id === accent);
       if (selected) {
         document.documentElement.style.setProperty("--primary", selected.hsl);
+        document.documentElement.style.setProperty("--primary-foreground", selected.fg);
         localStorage.setItem("heymamaey.accent", accent);
       }
     }
