@@ -34,6 +34,9 @@ import {
   Unlock,
   KeyRound,
   MapPin,
+  MessageSquare,
+  Music,
+  HardDrive,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -136,6 +139,18 @@ export function ChatPanel({
   const [showGifsMenu, setShowGifsMenu] = useState(false);
   const [showGalleryModal, setShowGalleryModal] = useState(false);
   const [activeMediaTab, setActiveMediaTab] = useState<MediaTab>("all");
+
+  // Thread Drawer State
+  const [activeThreadMessage, setActiveThreadMessage] = useState<Message | null>(null);
+  const [threadText, setThreadText] = useState("");
+
+  // Soundboard FX State
+  const [showSoundboard, setShowSoundboard] = useState(false);
+
+  // Storage Manager State
+  const [showStorageManager, setShowStorageManager] = useState(false);
+  const [storageCategory, setStorageCategory] = useState<"all" | "image" | "video" | "audio" | "file">("all");
+  const [storageSearch, setStorageSearch] = useState("");
 
   // Space PIN Lock state
   const [spacePin, setSpacePin] = useState<string>(() => {
@@ -635,6 +650,53 @@ export function ChatPanel({
     );
   };
 
+  const playFX = (name: string) => {
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      if (name === "cheer") {
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(440, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.3);
+      } else if (name === "airhorn") {
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(300, ctx.currentTime);
+        osc.frequency.linearRampToValueAtTime(500, ctx.currentTime + 0.15);
+      } else if (name === "party") {
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(523.25, ctx.currentTime);
+        osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.1);
+        osc.frequency.setValueAtTime(783.99, ctx.currentTime + 0.2);
+      } else if (name === "chime") {
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(1046.5, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(2093, ctx.currentTime + 0.3);
+      } else {
+        osc.type = "square";
+        osc.frequency.setValueAtTime(600, ctx.currentTime);
+      }
+
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+
+      osc.start();
+      osc.stop(ctx.currentTime + 0.4);
+    } catch {
+      /* ignore audio error */
+    }
+  };
+
+  const sendSoundFX = (label: string, fxName: string) => {
+    playFX(fxName);
+    void push("text", { text: `🔊 [Soundboard FX]: ${label}` });
+    setShowSoundboard(false);
+  };
+
   const typingArray = Array.from(typingUsers);
 
   const getWallpaperStyle = () => {
@@ -779,6 +841,15 @@ export function ChatPanel({
               className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0"
             >
               <FolderOpen className="size-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowStorageManager(true)}
+              title="Space Storage Manager"
+              className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0"
+            >
+              <HardDrive className="size-4 text-amber-400" />
             </button>
 
             <button
@@ -929,6 +1000,7 @@ export function ChatPanel({
             }}
             onStar={toggleStar}
             onReply={handleReplyQuote}
+            onOpenThread={(message) => setActiveThreadMessage(message)}
             isStarred={starredIds.has(m.id)}
             onEdit={(message) => {
               setEditing(message);
@@ -1098,6 +1170,9 @@ export function ChatPanel({
             </IconBtn>
             <IconBtn label="Share Location" onClick={handleShareLocation}>
               <MapPin className="size-4 text-emerald-400" />
+            </IconBtn>
+            <IconBtn label="Soundboard FX" onClick={() => setShowSoundboard((v) => !v)}>
+              <Music className="size-4 text-purple-400" />
             </IconBtn>
             <IconBtn label="Create Poll" onClick={() => setShowPollModal(true)}>
               <BarChart2 className="size-4" />
@@ -1584,6 +1659,210 @@ export function ChatPanel({
           />
         </div>
       )}
+      {showSoundboard && (
+        <div className="absolute bottom-20 left-4 z-40 w-72 rounded-2xl border border-border bg-card p-3 shadow-2xl animate-in zoom-in-95 duration-150">
+          <div className="flex items-center justify-between border-b border-border pb-2 mb-2">
+            <div className="flex items-center gap-1.5 font-bold text-xs">
+              <Music className="size-4 text-purple-400" />
+              <span>Synthesized Soundboard FX</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowSoundboard(false)}
+              className="rounded-full p-1 text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { label: "Cheer 👏", fx: "cheer" },
+              { label: "Airhorn 🎺", fx: "airhorn" },
+              { label: "Party 🥳", fx: "party" },
+              { label: "Chime ✨", fx: "chime" },
+              { label: "Buzzer 🚨", fx: "buzzer" },
+            ].map((item) => (
+              <button
+                key={item.fx}
+                type="button"
+                onClick={() => sendSoundFX(item.label, item.fx)}
+                className="flex items-center justify-center rounded-xl border border-border bg-secondary/60 py-2.5 text-xs font-semibold hover:bg-primary hover:text-primary-foreground transition-all"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeThreadMessage && (
+        <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-border bg-background shadow-2xl animate-in slide-in-from-right duration-200">
+          <div className="flex items-center justify-between border-b border-border p-4">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="size-5 text-amber-400" />
+              <h3 className="font-bold text-sm">Thread Replies</h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveThreadMessage(null)}
+              className="rounded-full p-1 text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 thin-scroll">
+            <div className="rounded-2xl bg-card border border-border p-3 space-y-1">
+              <p className="text-[10px] font-bold text-primary">{activeThreadMessage.authorName}</p>
+              <p className="text-xs">{activeThreadMessage.text || activeThreadMessage.fileName || "Parent message"}</p>
+            </div>
+
+            <div className="space-y-3 pt-2">
+              {messages
+                .filter((m) => m.threadParentId === activeThreadMessage.id)
+                .map((m) => (
+                  <MessageBubble
+                    key={m.id}
+                    message={m}
+                    mine={m.authorId === userId}
+                    onForward={onForward}
+                    onOpenImage={(url) => setLightbox(url)}
+                    onPin={() => setPinnedMessage(m)}
+                    onStar={(msg) => toggleStar(msg)}
+                    onReply={() => handleReplyQuote(m)}
+                    isStarred={starredIds.has(m.id)}
+                    onEdit={(msg) => setEditing(msg)}
+                    onDelete={(msg) => void deleteMessage(msg.id, space.id)}
+                  />
+                ))}
+            </div>
+          </div>
+
+          <div className="border-t border-border p-3 flex items-center gap-2">
+            <input
+              type="text"
+              value={threadText}
+              onChange={(e) => setThreadText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && threadText.trim()) {
+                  void push("text", { text: threadText.trim(), threadParentId: activeThreadMessage.id });
+                  setThreadText("");
+                }
+              }}
+              placeholder="Reply in thread..."
+              className="flex-1 rounded-xl bg-card px-3 py-2 text-xs outline-none ring-1 ring-input focus:ring-primary"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                if (threadText.trim()) {
+                  void push("text", { text: threadText.trim(), threadParentId: activeThreadMessage.id });
+                  setThreadText("");
+                }
+              }}
+              className="rounded-xl bg-primary p-2 text-primary-foreground font-semibold text-xs"
+            >
+              <Send className="size-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showStorageManager && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="flex h-[80vh] w-full max-w-2xl flex-col rounded-3xl bg-card border border-border p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <HardDrive className="size-5 text-amber-400" />
+                <h3 className="font-bold text-sm">Space Media & Storage Manager</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowStorageManager(false)}
+                className="rounded-full p-1 text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="rounded-xl bg-secondary/70 p-3 text-center">
+                <p className="text-[10px] uppercase font-bold text-muted-foreground">Total Files</p>
+                <p className="text-lg font-bold font-mono text-primary mt-0.5">{messages.filter((m) => m.dataUrl).length}</p>
+              </div>
+              <div className="rounded-xl bg-secondary/70 p-3 text-center">
+                <p className="text-[10px] uppercase font-bold text-muted-foreground">Total Storage</p>
+                <p className="text-lg font-bold font-mono text-emerald-400 mt-0.5">
+                  {formatBytes(messages.reduce((acc, m) => acc + (m.fileSize || 0), 0))}
+                </p>
+              </div>
+              <div className="rounded-xl bg-secondary/70 p-3 text-center">
+                <p className="text-[10px] uppercase font-bold text-muted-foreground">Photos & Videos</p>
+                <p className="text-lg font-bold font-mono text-sky-400 mt-0.5">
+                  {messages.filter((m) => m.kind === "image" || m.kind === "video").length}
+                </p>
+              </div>
+              <div className="rounded-xl bg-secondary/70 p-3 text-center">
+                <p className="text-[10px] uppercase font-bold text-muted-foreground">Audio & Docs</p>
+                <p className="text-lg font-bold font-mono text-purple-400 mt-0.5">
+                  {messages.filter((m) => m.kind === "audio" || m.kind === "file").length}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
+              <div className="flex items-center gap-1">
+                {(["all", "image", "video", "audio", "file"] as const).map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setStorageCategory(cat)}
+                    className={`rounded-lg px-2.5 py-1 text-xs font-semibold capitalize transition-colors ${
+                      storageCategory === cat ? "bg-primary text-primary-foreground shadow-xs" : "bg-secondary text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="text"
+                value={storageSearch}
+                onChange={(e) => setStorageSearch(e.target.value)}
+                placeholder="Search storage files..."
+                className="rounded-xl bg-background px-3 py-1.5 text-xs outline-none ring-1 ring-input focus:ring-primary w-48"
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto thin-scroll space-y-2">
+              {messages
+                .filter((m) => m.dataUrl)
+                .filter((m) => (storageCategory === "all" ? true : m.kind === storageCategory))
+                .filter((m) => (storageSearch.trim() ? (m.fileName || m.text || "").toLowerCase().includes(storageSearch.toLowerCase()) : true))
+                .map((m) => (
+                  <div key={m.id} className="flex items-center justify-between rounded-xl bg-secondary/50 p-2.5 border border-border">
+                    <div className="min-w-0 flex-1 pr-3">
+                      <p className="truncate text-xs font-semibold text-foreground">{m.fileName || `${m.kind} attachment`}</p>
+                      <p className="text-[10px] text-muted-foreground font-mono">
+                        {m.fileSize ? formatBytes(m.fileSize) : "Unknown size"} • {new Date(m.createdAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                    {m.dataUrl && (
+                      <a
+                        href={m.dataUrl}
+                        download={m.fileName || `download-${m.id}`}
+                        className="flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground shadow-xs"
+                      >
+                        <Download className="size-3" /> Save
+                      </a>
+                    )}
+                  </div>
+                ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       <InAppCall
         spaceCode={space.code}
         userId={userId}

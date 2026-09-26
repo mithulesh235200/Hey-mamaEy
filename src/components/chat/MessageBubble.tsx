@@ -17,12 +17,58 @@ import {
   Volume2,
   MapPin,
   ExternalLink,
+  MessageSquare,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatBytes, type Message } from "@/lib/heymama";
 import { AudioMessage } from "./AudioMessage";
 
 const REACTION_EMOJIS = ["❤️", "👍", "😂", "🔥", "😮", "😢"];
+
+function CodeSnippet({ codeText, mine }: { codeText: string; mine?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  const lines = codeText.trim().split("\n");
+  const firstLine = lines[0] || "";
+  const langMatch = firstLine.match(/^[a-zA-Z0-9_-]+/);
+  const lang = langMatch ? langMatch[0] : "code";
+  const bodyLines = langMatch ? lines.slice(1) : lines;
+  const rawCode = bodyLines.join("\n");
+
+  const copyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(rawCode);
+      setCopied(true);
+      toast.success("Code copied!");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("Could not copy code");
+    }
+  };
+
+  return (
+    <div className="my-1.5 overflow-hidden rounded-xl border border-border/80 bg-zinc-950 text-zinc-100 shadow-md text-left">
+      <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900 px-3 py-1.5 text-[10px] font-mono text-zinc-400">
+        <span className="uppercase font-bold tracking-wider text-amber-400">{lang}</span>
+        <button
+          type="button"
+          onClick={copyCode}
+          className="flex items-center gap-1 rounded-md px-2 py-0.5 transition-colors hover:bg-zinc-800 text-zinc-300"
+        >
+          {copied ? <Check className="size-3 text-emerald-400" /> : <Copy className="size-3" />}
+          <span>{copied ? "Copied!" : "Copy"}</span>
+        </button>
+      </div>
+      <div className="p-2.5 font-mono text-xs overflow-x-auto thin-scroll space-y-0.5 leading-relaxed">
+        {bodyLines.map((line, idx) => (
+          <div key={idx} className="flex gap-3">
+            <span className="w-5 shrink-0 text-right select-none text-[10px] text-zinc-600">{idx + 1}</span>
+            <span className="flex-1 text-zinc-200 whitespace-pre">{line}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function MessageBubble({
   message,
@@ -35,6 +81,7 @@ export function MessageBubble({
   isStarred,
   onEdit,
   onDelete,
+  onOpenThread,
 }: {
   message: Message;
   mine: boolean;
@@ -46,6 +93,7 @@ export function MessageBubble({
   isStarred?: boolean;
   onEdit: (m: Message) => void;
   onDelete: (m: Message) => void;
+  onOpenThread?: (m: Message) => void;
 }) {
   const [showMenu, setShowMenu] = useState(false);
   const [showReactions, setShowReactions] = useState(false);
@@ -115,7 +163,17 @@ export function MessageBubble({
         >
           {message.kind === "text" && message.text && (
             <div className="whitespace-pre-wrap break-words text-xs leading-relaxed sm:text-sm font-medium">
-              {message.text}
+              {message.text.includes("```") ? (
+                message.text.split(/(```[\s\S]*?```)/g).map((chunk, i) => {
+                  if (chunk.startsWith("```") && chunk.endsWith("```")) {
+                    const innerCode = chunk.slice(3, -3);
+                    return <CodeSnippet key={i} codeText={innerCode} mine={mine} />;
+                  }
+                  return <span key={i}>{chunk}</span>;
+                })
+              ) : (
+                message.text
+              )}
             </div>
           )}
 
@@ -264,6 +322,17 @@ export function MessageBubble({
               }
             >
               <Volume2 className="size-3.5" />
+            </button>
+          )}
+
+          {onOpenThread && (
+            <button
+              type="button"
+              onClick={() => onOpenThread(message)}
+              title="Reply in Thread"
+              className="rounded-full bg-card p-1 text-muted-foreground hover:text-primary transition-colors"
+            >
+              <MessageSquare className="size-3.5 text-amber-400" />
             </button>
           )}
 

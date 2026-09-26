@@ -20,6 +20,7 @@ export type Message = {
   latitude?: number;
   longitude?: number;
   locationName?: string;
+  threadParentId?: string;
   createdAt: number;
 };
 
