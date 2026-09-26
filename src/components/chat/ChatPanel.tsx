@@ -1244,6 +1244,11 @@ export function ChatPanel({
                     mine={m.authorId === userId}
                     onForward={onForward}
                     onOpenImage={setLightbox}
+                    onPin={(message) => {
+                      setPinnedMessage(message);
+                      setShowStarredModal(false);
+                      toast.success("Message pinned to top");
+                    }}
                     onStar={toggleStar}
                     onReply={handleReplyQuote}
                     isStarred={true}
