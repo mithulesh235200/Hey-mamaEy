@@ -1,17 +1,12 @@
 // Service Worker for Space Connect PWA
 const CACHE_NAME = "space-connect-v1";
-const ASSETS_TO_CACHE = [
-  "/",
-  "/manifest.json",
-  "/heymama.jpeg",
-  "/favicon.ico"
-];
+const ASSETS_TO_CACHE = ["/", "/manifest.json", "/heymama.jpeg", "/favicon.ico"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(ASSETS_TO_CACHE);
-    })
+    }),
   );
   self.skipWaiting();
 });
@@ -24,9 +19,9 @@ self.addEventListener("activate", (event) => {
           if (key !== CACHE_NAME) {
             return caches.delete(key);
           }
-        })
+        }),
       );
-    })
+    }),
   );
   self.clients.claim();
 });
@@ -47,6 +42,6 @@ self.addEventListener("fetch", (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request))
+      .catch(() => caches.match(event.request)),
   );
 });

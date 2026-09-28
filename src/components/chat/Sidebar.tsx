@@ -51,6 +51,7 @@ export function Sidebar({
   messages: Message[];
   onNavigate?: () => void;
 }) {
+  const chatState = useChatState();
   const [joinCode, setJoinCode] = useState("");
   const [newName, setNewName] = useState("");
   const [restoreId, setRestoreId] = useState("");
@@ -119,9 +120,10 @@ export function Sidebar({
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown Supabase error";
       toast.error("Couldn't create the Space", {
-        description: message.includes("PGRST202") || message.includes("schema cache")
-          ? "Supabase migrations are not applied to this project yet."
-          : message,
+        description:
+          message.includes("PGRST202") || message.includes("schema cache")
+            ? "Supabase migrations are not applied to this project yet."
+            : message,
       });
       return;
     }
@@ -187,7 +189,9 @@ export function Sidebar({
                   title={`Accent: ${a.label}`}
                   className={
                     "size-4 rounded-full transition-transform " +
-                    (accent === a.id ? "scale-125 ring-2 ring-primary ring-offset-1 ring-offset-background" : "hover:scale-110 opacity-75")
+                    (accent === a.id
+                      ? "scale-125 ring-2 ring-primary ring-offset-1 ring-offset-background"
+                      : "hover:scale-110 opacity-75")
                   }
                   style={{ backgroundColor: a.color }}
                 />
@@ -218,7 +222,10 @@ export function Sidebar({
 
         <div className="mt-3 rounded-xl bg-card p-3 glow-ring">
           <div className="flex items-center justify-between">
-            <label htmlFor="display-name" className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            <label
+              htmlFor="display-name"
+              className="text-[10px] uppercase tracking-wider text-muted-foreground"
+            >
               Your name
             </label>
             <div className="relative">
@@ -361,7 +368,6 @@ export function Sidebar({
           </p>
         )}
         {spaces.map((s) => {
-          const chatState = useChatState();
           const unread = getUnreadCount(s.id, messages, userId, chatState.readTimestamps);
 
           return (
@@ -411,9 +417,7 @@ export function Sidebar({
                 onClick={async () => {
                   if (!window.confirm(`Leave "${s.name}"?`)) return;
                   const ok = await leaveSpace(s.id);
-                  toast[ok ? "success" : "error"](
-                    ok ? `Left ${s.name}` : "Couldn't leave Space",
-                  );
+                  toast[ok ? "success" : "error"](ok ? `Left ${s.name}` : "Couldn't leave Space");
                 }}
                 aria-label={`Leave ${s.name}`}
                 className="opacity-0 group-hover:opacity-100 rounded-lg p-1.5 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive"

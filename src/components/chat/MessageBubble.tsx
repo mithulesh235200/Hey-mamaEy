@@ -61,7 +61,9 @@ function CodeSnippet({ codeText, mine }: { codeText: string; mine?: boolean }) {
       <div className="p-2.5 font-mono text-xs overflow-x-auto thin-scroll space-y-0.5 leading-relaxed">
         {bodyLines.map((line, idx) => (
           <div key={idx} className="flex gap-3">
-            <span className="w-5 shrink-0 text-right select-none text-[10px] text-zinc-600">{idx + 1}</span>
+            <span className="w-5 shrink-0 text-right select-none text-[10px] text-zinc-600">
+              {idx + 1}
+            </span>
             <span className="flex-1 text-zinc-200 whitespace-pre">{line}</span>
           </div>
         ))}
@@ -163,17 +165,15 @@ export function MessageBubble({
         >
           {message.kind === "text" && message.text && (
             <div className="whitespace-pre-wrap break-words text-xs leading-relaxed sm:text-sm font-medium">
-              {message.text.includes("```") ? (
-                message.text.split(/(```[\s\S]*?```)/g).map((chunk, i) => {
-                  if (chunk.startsWith("```") && chunk.endsWith("```")) {
-                    const innerCode = chunk.slice(3, -3);
-                    return <CodeSnippet key={i} codeText={innerCode} mine={mine} />;
-                  }
-                  return <span key={i}>{chunk}</span>;
-                })
-              ) : (
-                message.text
-              )}
+              {message.text.includes("```")
+                ? message.text.split(/(```[\s\S]*?```)/g).map((chunk, i) => {
+                    if (chunk.startsWith("```") && chunk.endsWith("```")) {
+                      const innerCode = chunk.slice(3, -3);
+                      return <CodeSnippet key={i} codeText={innerCode} mine={mine} />;
+                    }
+                    return <span key={i}>{chunk}</span>;
+                  })
+                : message.text}
             </div>
           )}
 
@@ -229,7 +229,9 @@ export function MessageBubble({
             <div className="flex items-center gap-3">
               <div
                 className={`flex size-10 items-center justify-center rounded-xl ${
-                  mine ? "bg-primary-foreground/20 text-primary-foreground" : "bg-secondary text-primary"
+                  mine
+                    ? "bg-primary-foreground/20 text-primary-foreground"
+                    : "bg-secondary text-primary"
                 }`}
               >
                 <FileText className="size-5" />
@@ -245,7 +247,9 @@ export function MessageBubble({
                   href={message.dataUrl}
                   download={message.fileName || "download"}
                   className={`rounded-lg p-2 transition-colors ${
-                    mine ? "hover:bg-primary-foreground/20 text-primary-foreground" : "hover:bg-secondary text-foreground"
+                    mine
+                      ? "hover:bg-primary-foreground/20 text-primary-foreground"
+                      : "hover:bg-secondary text-foreground"
                   }`}
                   aria-label="Download file"
                 >
@@ -258,7 +262,9 @@ export function MessageBubble({
           {message.kind === "location" && message.latitude && message.longitude && (
             <div className="space-y-2 py-0.5">
               <div className="flex items-center gap-2 font-semibold text-xs">
-                <MapPin className={`size-4 ${mine ? "text-primary-foreground" : "text-destructive"}`} />
+                <MapPin
+                  className={`size-4 ${mine ? "text-primary-foreground" : "text-destructive"}`}
+                />
                 <span>{message.locationName || "Shared GPS Location"}</span>
               </div>
               <p className="text-[10px] opacity-85 font-mono">
@@ -303,7 +309,9 @@ export function MessageBubble({
             {isStarred && <Star className="size-3 text-amber-400 fill-amber-400" />}
             {mine && (
               <span title={message.isRead ? "Read" : "Delivered"}>
-                <CheckCheck className={`size-3 ${message.isRead ? "text-sky-400 fill-sky-400/20" : "opacity-90"}`} />
+                <CheckCheck
+                  className={`size-3 ${message.isRead ? "text-sky-400 fill-sky-400/20" : "opacity-90"}`}
+                />
               </span>
             )}
           </div>

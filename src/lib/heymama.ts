@@ -519,7 +519,12 @@ export function formatTime(ts: number) {
   });
 }
 
-export function setTypingStatus(spaceId: string, userId: string, userName: string, isTyping: boolean) {
+export function setTypingStatus(
+  spaceId: string,
+  userId: string,
+  userName: string,
+  isTyping: boolean,
+) {
   const currentMap = state.typingMap[spaceId] || {};
   const nextSpaceMap = { ...currentMap };
   if (isTyping) {
@@ -544,11 +549,15 @@ export function markSpaceAsRead(spaceId: string) {
   });
 }
 
-export function getUnreadCount(spaceId: string, messages: Message[], userId: string, readTimestamps: Record<string, number> = {}): number {
+export function getUnreadCount(
+  spaceId: string,
+  messages: Message[],
+  userId: string,
+  readTimestamps: Record<string, number> = {},
+): number {
   if (!spaceId) return 0;
   const lastRead = readTimestamps[spaceId] || 0;
   return messages.filter(
-    (m) => m.spaceId === spaceId && m.authorId !== userId && m.createdAt > lastRead
+    (m) => m.spaceId === spaceId && m.authorId !== userId && m.createdAt > lastRead,
   ).length;
 }
-

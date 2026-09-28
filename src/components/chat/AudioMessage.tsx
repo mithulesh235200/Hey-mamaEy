@@ -52,9 +52,7 @@ export function AudioMessage({ dataUrl, mine }: { dataUrl: string; mine?: boolea
           type="button"
           onClick={toggle}
           className={`flex size-9 items-center justify-center rounded-full transition-transform hover:scale-105 ${
-            mine
-              ? "bg-primary-foreground text-primary"
-              : "bg-primary text-primary-foreground"
+            mine ? "bg-primary-foreground text-primary" : "bg-primary text-primary-foreground"
           }`}
           aria-label={playing ? "Pause voice note" : "Play voice note"}
         >
@@ -63,20 +61,24 @@ export function AudioMessage({ dataUrl, mine }: { dataUrl: string; mine?: boolea
 
         <div className="flex flex-col min-w-32">
           <div className="flex h-5 items-center gap-0.5">
-            {[35, 75, 45, 95, 60, 100, 50, 85, 40, 90, 30, 80, 65, 45, 70, 90, 55, 60].map((h, i) => (
-              <span
-                key={i}
-                className={`w-0.5 rounded-full transition-all duration-150 ${
-                  playing ? "animate-pulse" : ""
-                } ${mine ? "bg-primary-foreground" : "bg-primary"}`}
-                style={{
-                  height: playing ? `${Math.max(25, (h * ((i % 3) + 1.2)) % 100)}%` : `${h}%`,
-                  opacity: mine ? 0.9 : 0.85,
-                }}
-              />
-            ))}
+            {[35, 75, 45, 95, 60, 100, 50, 85, 40, 90, 30, 80, 65, 45, 70, 90, 55, 60].map(
+              (h, i) => (
+                <span
+                  key={i}
+                  className={`w-0.5 rounded-full transition-all duration-150 ${
+                    playing ? "animate-pulse" : ""
+                  } ${mine ? "bg-primary-foreground" : "bg-primary"}`}
+                  style={{
+                    height: playing ? `${Math.max(25, (h * ((i % 3) + 1.2)) % 100)}%` : `${h}%`,
+                    opacity: mine ? 0.9 : 0.85,
+                  }}
+                />
+              ),
+            )}
           </div>
-          <span className={`text-[10px] mt-0.5 font-medium ${mine ? "text-primary-foreground/90" : "text-muted-foreground"}`}>
+          <span
+            className={`text-[10px] mt-0.5 font-medium ${mine ? "text-primary-foreground/90" : "text-muted-foreground"}`}
+          >
             {playing ? "Playing Voice Note..." : "Voice Note"}
           </span>
         </div>
@@ -100,7 +102,11 @@ export function AudioMessage({ dataUrl, mine }: { dataUrl: string; mine?: boolea
             onClick={() => setShowFxMenu((v) => !v)}
             title="Voice Pitch FX"
             className={`rounded-full p-1.5 transition-colors ${
-              voiceFx !== "normal" ? "bg-amber-500 text-black font-bold" : mine ? "bg-primary-foreground/20 text-primary-foreground" : "bg-secondary text-muted-foreground"
+              voiceFx !== "normal"
+                ? "bg-amber-500 text-black font-bold"
+                : mine
+                  ? "bg-primary-foreground/20 text-primary-foreground"
+                  : "bg-secondary text-muted-foreground"
             }`}
           >
             <Wand2 className="size-3" />
@@ -115,10 +121,20 @@ export function AudioMessage({ dataUrl, mine }: { dataUrl: string; mine?: boolea
                   onClick={() => changeFx(fx)}
                   className={
                     "flex w-full items-center justify-between rounded-lg px-2 py-1 text-[11px] capitalize transition-colors " +
-                    (voiceFx === fx ? "bg-primary text-primary-foreground font-semibold" : "hover:bg-secondary text-muted-foreground")
+                    (voiceFx === fx
+                      ? "bg-primary text-primary-foreground font-semibold"
+                      : "hover:bg-secondary text-muted-foreground")
                   }
                 >
-                  <span>{fx === "chipmunk" ? "🐿️ Chipmunk" : fx === "robot" ? "🤖 Robot" : fx === "deep" ? "🎙️ Deep" : "Normal"}</span>
+                  <span>
+                    {fx === "chipmunk"
+                      ? "🐿️ Chipmunk"
+                      : fx === "robot"
+                        ? "🤖 Robot"
+                        : fx === "deep"
+                          ? "🎙️ Deep"
+                          : "Normal"}
+                  </span>
                 </button>
               ))}
             </div>

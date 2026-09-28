@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Mic, MicOff, Monitor, MonitorOff, Phone, PhoneOff, Video, VideoOff, X } from "lucide-react";
+import {
+  Mic,
+  MicOff,
+  Monitor,
+  MonitorOff,
+  Phone,
+  PhoneOff,
+  Video,
+  VideoOff,
+  X,
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 type CallMode = "voice" | "video";
@@ -503,10 +513,12 @@ export function InAppCall({
       channelRef.current = null;
       closePeer();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spaceCode, userId]);
 
   useEffect(() => {
     if (requestedMode) void startCall(requestedMode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedMode]);
 
   useEffect(() => {
@@ -621,12 +633,18 @@ export function InAppCall({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/85 p-6 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 text-center shadow-2xl">
             <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-primary/15 text-primary animate-pulse">
-              {incoming.mode === "voice" ? <Phone className="size-7" /> : <Video className="size-7" />}
+              {incoming.mode === "voice" ? (
+                <Phone className="size-7" />
+              ) : (
+                <Video className="size-7" />
+              )}
             </div>
             <h2 className="mt-4 text-lg font-semibold text-foreground">
               Incoming {incoming.mode ?? "video"} call
             </h2>
-            <p className="mt-1 text-sm text-muted-foreground">Someone in this Space is calling you.</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Someone in this Space is calling you.
+            </p>
             <div className="mt-6 flex justify-center gap-3">
               <button
                 type="button"
@@ -734,10 +752,16 @@ export function InAppCall({
                   aria-label={sharingScreen ? "Stop screen share" : "Share screen"}
                   className={
                     "flex size-12 items-center justify-center rounded-full bg-card hover:text-primary transition-colors border border-border " +
-                    (sharingScreen ? "text-primary ring-2 ring-primary border-primary" : "text-foreground")
+                    (sharingScreen
+                      ? "text-primary ring-2 ring-primary border-primary"
+                      : "text-foreground")
                   }
                 >
-                  {sharingScreen ? <MonitorOff className="size-5" /> : <Monitor className="size-5" />}
+                  {sharingScreen ? (
+                    <MonitorOff className="size-5" />
+                  ) : (
+                    <Monitor className="size-5" />
+                  )}
                 </button>
               </>
             )}

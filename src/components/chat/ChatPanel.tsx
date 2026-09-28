@@ -59,7 +59,9 @@ const MAX_BYTES = 50 * 1024 * 1024; // 50 MB limit
 function playChime(type: "send" | "receive", muted: boolean) {
   if (muted) return;
   try {
-    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!AudioCtx) return;
     const ctx = new AudioCtx();
     const osc = ctx.createOscillator();
@@ -131,7 +133,9 @@ export function ChatPanel({
     return (localStorage.getItem("heymamaey.wallpaper") as WallpaperStyle) || "default";
   });
   const [disappearingTimer, setDisappearingTimer] = useState<DisappearingTimer>(() => {
-    return (localStorage.getItem(`heymamaey.disappearing.${space?.id}`) as DisappearingTimer) || "off";
+    return (
+      (localStorage.getItem(`heymamaey.disappearing.${space?.id}`) as DisappearingTimer) || "off"
+    );
   });
   const [showDisappearingMenu, setShowDisappearingMenu] = useState(false);
   const [showWallpaperMenu, setShowWallpaperMenu] = useState(false);
@@ -149,7 +153,9 @@ export function ChatPanel({
 
   // Storage Manager State
   const [showStorageManager, setShowStorageManager] = useState(false);
-  const [storageCategory, setStorageCategory] = useState<"all" | "image" | "video" | "audio" | "file">("all");
+  const [storageCategory, setStorageCategory] = useState<
+    "all" | "image" | "video" | "audio" | "file"
+  >("all");
   const [storageSearch, setStorageSearch] = useState("");
 
   // Space PIN Lock state
@@ -205,7 +211,11 @@ export function ChatPanel({
   }, [space?.id]);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+    if (
+      typeof window !== "undefined" &&
+      "Notification" in window &&
+      Notification.permission === "default"
+    ) {
       void Notification.requestPermission();
     }
   }, []);
@@ -215,7 +225,12 @@ export function ChatPanel({
       const last = messages[messages.length - 1];
       if (last && last.authorId !== userId) {
         playChime("receive", mutedSound);
-        if (typeof window !== "undefined" && document.hidden && "Notification" in window && Notification.permission === "granted") {
+        if (
+          typeof window !== "undefined" &&
+          document.hidden &&
+          "Notification" in window &&
+          Notification.permission === "granted"
+        ) {
           try {
             new Notification(`New message in ${space?.name || "Space"}`, {
               body: `${last.authorName}: ${last.text || last.fileName || "Shared media"}`,
@@ -331,7 +346,11 @@ export function ChatPanel({
 
   const handleReplyQuote = (m: Message) => {
     const author = m.authorName || "User";
-    const snippet = m.text ? (m.text.length > 40 ? m.text.slice(0, 40) + "..." : m.text) : m.fileName || "attachment";
+    const snippet = m.text
+      ? m.text.length > 40
+        ? m.text.slice(0, 40) + "..."
+        : m.text
+      : m.fileName || "attachment";
     setText((prev) => `> Replying to @${author}: "${snippet}"\n${prev}`);
   };
 
@@ -551,7 +570,9 @@ export function ChatPanel({
       return;
     }
 
-    const pollText = `📊 **POLL: ${pollQuestion.trim()}**\n` + validOptions.map((opt, i) => `${i + 1}. ${opt.trim()}`).join("\n");
+    const pollText =
+      `📊 **POLL: ${pollQuestion.trim()}**\n` +
+      validOptions.map((opt, i) => `${i + 1}. ${opt.trim()}`).join("\n");
     const ok = await sendMessage({ spaceId: space.id, kind: "text", text: pollText });
     if (ok) {
       toast.success("Poll created!");
@@ -646,13 +667,15 @@ export function ChatPanel({
       (err) => {
         toast.error(`Location access error: ${err.message}`);
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      { enableHighAccuracy: true, timeout: 10000 },
     );
   };
 
   const playFX = (name: string) => {
     try {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const ctx = new AudioCtx();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -701,13 +724,23 @@ export function ChatPanel({
 
   const getWallpaperStyle = () => {
     if (wallpaper === "dots") {
-      return { backgroundImage: "radial-gradient(var(--border) 1px, transparent 1px)", backgroundSize: "16px 16px" };
+      return {
+        backgroundImage: "radial-gradient(var(--border) 1px, transparent 1px)",
+        backgroundSize: "16px 16px",
+      };
     }
     if (wallpaper === "grid") {
-      return { backgroundImage: "linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px)", backgroundSize: "24px 24px" };
+      return {
+        backgroundImage:
+          "linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px)",
+        backgroundSize: "24px 24px",
+      };
     }
     if (wallpaper === "cosmic") {
-      return { backgroundImage: "radial-gradient(circle at 50% 50%, var(--primary) 0%, transparent 70%)", opacity: 0.15 };
+      return {
+        backgroundImage: "radial-gradient(circle at 50% 50%, var(--primary) 0%, transparent 70%)",
+        opacity: 0.15,
+      };
     }
     return {};
   };
@@ -732,7 +765,9 @@ export function ChatPanel({
           </div>
           <div>
             <h3 className="font-bold text-base text-foreground">{space.name} is Locked</h3>
-            <p className="text-xs text-muted-foreground mt-1">Enter your 4-digit PIN to access messages</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Enter your 4-digit PIN to access messages
+            </p>
           </div>
           <input
             type="password"
@@ -756,7 +791,10 @@ export function ChatPanel({
   }
 
   return (
-    <section className="chat-canvas flex h-full min-w-0 flex-1 flex-col" style={getWallpaperStyle()}>
+    <section
+      className="chat-canvas flex h-full min-w-0 flex-1 flex-col"
+      style={getWallpaperStyle()}
+    >
       <header className="flex flex-col border-b border-border bg-sidebar px-3 py-2.5 sm:px-4 sm:py-3">
         <div className="flex items-center gap-2 sm:gap-3">
           <button
@@ -806,7 +844,9 @@ export function ChatPanel({
               </button>
               {showDisappearingMenu && (
                 <div className="absolute right-0 top-10 z-40 w-40 rounded-xl border border-border bg-card p-1.5 shadow-2xl animate-in zoom-in-95 duration-150">
-                  <div className="px-2 py-1 text-[10px] uppercase font-bold text-muted-foreground">Auto-destruct</div>
+                  <div className="px-2 py-1 text-[10px] uppercase font-bold text-muted-foreground">
+                    Auto-destruct
+                  </div>
                   {(["off", "24h", "7d", "30d"] as DisappearingTimer[]).map((t) => (
                     <button
                       key={t}
@@ -814,7 +854,9 @@ export function ChatPanel({
                       onClick={() => changeDisappearingTimer(t)}
                       className={
                         "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors " +
-                        (disappearingTimer === t ? "bg-primary text-primary-foreground font-semibold" : "hover:bg-secondary text-muted-foreground")
+                        (disappearingTimer === t
+                          ? "bg-primary text-primary-foreground font-semibold"
+                          : "hover:bg-secondary text-muted-foreground")
                       }
                     >
                       <span>{t === "off" ? "Off (Permanent)" : t}</span>
@@ -858,7 +900,11 @@ export function ChatPanel({
               title={mutedSound ? "Unmute sounds" : "Mute sounds"}
               className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0"
             >
-              {mutedSound ? <VolumeX className="size-4 text-destructive" /> : <Volume2 className="size-4 text-primary" />}
+              {mutedSound ? (
+                <VolumeX className="size-4 text-destructive" />
+              ) : (
+                <Volume2 className="size-4 text-primary" />
+              )}
             </button>
 
             <div className="relative shrink-0">
@@ -879,7 +925,9 @@ export function ChatPanel({
                       onClick={() => changeWallpaper(w)}
                       className={
                         "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs capitalize transition-colors " +
-                        (wallpaper === w ? "bg-primary text-primary-foreground font-semibold" : "hover:bg-secondary text-muted-foreground")
+                        (wallpaper === w
+                          ? "bg-primary text-primary-foreground font-semibold"
+                          : "hover:bg-secondary text-muted-foreground")
                       }
                     >
                       <span>{w}</span>
@@ -923,10 +971,18 @@ export function ChatPanel({
               <Share2 className="size-3.5" />
               <span className="hidden sm:inline">Share</span>
             </button>
-            <IconBtn label="Start voice call" onClick={() => setCallMode("voice")} className="shrink-0">
+            <IconBtn
+              label="Start voice call"
+              onClick={() => setCallMode("voice")}
+              className="shrink-0"
+            >
               <Phone className="size-3.5" />
             </IconBtn>
-            <IconBtn label="Start video call" onClick={() => setCallMode("video")} className="shrink-0">
+            <IconBtn
+              label="Start video call"
+              onClick={() => setCallMode("video")}
+              className="shrink-0"
+            >
               <Video className="size-3.5" />
             </IconBtn>
           </div>
@@ -984,7 +1040,9 @@ export function ChatPanel({
       >
         {filteredMessages.length === 0 && (
           <p className="py-10 text-center text-xs text-muted-foreground">
-            {searchQuery ? "No messages matching your search." : "No messages yet — send text, images, video, voice notes or documents."}
+            {searchQuery
+              ? "No messages matching your search."
+              : "No messages yet — send text, images, video, voice notes or documents."}
           </p>
         )}
         {filteredMessages.map((m) => (
@@ -1061,17 +1119,43 @@ export function ChatPanel({
 
               {showGifsMenu && (
                 <div className="absolute right-0 bottom-8 z-40 w-64 rounded-2xl border border-border bg-card p-2 shadow-2xl animate-in zoom-in-95 duration-150 space-y-2">
-                  <div className="px-2 py-0.5 text-[10px] uppercase font-bold text-muted-foreground">GIFs & Animated Stickers</div>
+                  <div className="px-2 py-0.5 text-[10px] uppercase font-bold text-muted-foreground">
+                    GIFs & Animated Stickers
+                  </div>
                   <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto thin-scroll p-1">
                     {[
-                      { label: "Party 🎉", url: "https://media.giphy.com/media/l2JIdnF6aJnAqzmy4/giphy.gif" },
-                      { label: "Mindblown 🤯", url: "https://media.giphy.com/media/26ufdipQqU2lhNA4g/giphy.gif" },
-                      { label: "High Five 🙌", url: "https://media.giphy.com/media/3oEJHV0z8S7WM4MwnK/giphy.gif" },
-                      { label: "Dance 💃", url: "https://media.giphy.com/media/l3vRlT2k2L35CboWY/giphy.gif" },
-                      { label: "Cat Vibe 🐱", url: "https://media.giphy.com/media/GeimqsH0TLDt4tScGw/giphy.gif" },
-                      { label: "Applause 👏", url: "https://media.giphy.com/media/g9582DNuQppxC/giphy.gif" },
-                      { label: "Cool 😎", url: "https://media.giphy.com/media/l41YkxvU8c7J7Bba0/giphy.gif" },
-                      { label: "Shocked 😱", url: "https://media.giphy.com/media/LpLd2NGvOtAXVAkEFz/giphy.gif" },
+                      {
+                        label: "Party 🎉",
+                        url: "https://media.giphy.com/media/l2JIdnF6aJnAqzmy4/giphy.gif",
+                      },
+                      {
+                        label: "Mindblown 🤯",
+                        url: "https://media.giphy.com/media/26ufdipQqU2lhNA4g/giphy.gif",
+                      },
+                      {
+                        label: "High Five 🙌",
+                        url: "https://media.giphy.com/media/3oEJHV0z8S7WM4MwnK/giphy.gif",
+                      },
+                      {
+                        label: "Dance 💃",
+                        url: "https://media.giphy.com/media/l3vRlT2k2L35CboWY/giphy.gif",
+                      },
+                      {
+                        label: "Cat Vibe 🐱",
+                        url: "https://media.giphy.com/media/GeimqsH0TLDt4tScGw/giphy.gif",
+                      },
+                      {
+                        label: "Applause 👏",
+                        url: "https://media.giphy.com/media/g9582DNuQppxC/giphy.gif",
+                      },
+                      {
+                        label: "Cool 😎",
+                        url: "https://media.giphy.com/media/l41YkxvU8c7J7Bba0/giphy.gif",
+                      },
+                      {
+                        label: "Shocked 😱",
+                        url: "https://media.giphy.com/media/LpLd2NGvOtAXVAkEFz/giphy.gif",
+                      },
                     ].map((gif) => (
                       <button
                         key={gif.url}
@@ -1082,8 +1166,14 @@ export function ChatPanel({
                         }}
                         className="group relative overflow-hidden rounded-xl border border-border bg-secondary/50 p-1 hover:border-primary transition-all"
                       >
-                        <img src={gif.url} alt={gif.label} className="h-16 w-full object-cover rounded-lg group-hover:scale-105 transition-transform" />
-                        <span className="mt-0.5 block truncate text-[9px] font-semibold text-center">{gif.label}</span>
+                        <img
+                          src={gif.url}
+                          alt={gif.label}
+                          className="h-16 w-full object-cover rounded-lg group-hover:scale-105 transition-transform"
+                        />
+                        <span className="mt-0.5 block truncate text-[9px] font-semibold text-center">
+                          {gif.label}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -1103,7 +1193,9 @@ export function ChatPanel({
 
               {showSnippetsMenu && (
                 <div className="absolute right-0 bottom-8 z-40 w-64 rounded-2xl border border-border bg-card p-2 shadow-2xl animate-in zoom-in-95 duration-150 space-y-1">
-                  <div className="px-2 py-1 text-[10px] uppercase font-bold text-muted-foreground">Quick Templates</div>
+                  <div className="px-2 py-1 text-[10px] uppercase font-bold text-muted-foreground">
+                    Quick Templates
+                  </div>
                   {DRAFT_TEMPLATES.map((tmpl, idx) => (
                     <button
                       key={idx}
@@ -1249,7 +1341,9 @@ export function ChatPanel({
             </div>
             <div>
               <h3 className="font-bold text-sm">Space Lock PIN</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">Protect this Space with a 4-digit code</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Protect this Space with a 4-digit code
+              </p>
             </div>
             <input
               type="password"
@@ -1296,7 +1390,9 @@ export function ChatPanel({
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <FolderOpen className="size-5 text-primary" />
-                <h3 className="font-bold text-sm">Space Media Gallery ({filteredGallery.length})</h3>
+                <h3 className="font-bold text-sm">
+                  Space Media Gallery ({filteredGallery.length})
+                </h3>
               </div>
               <button
                 type="button"
@@ -1315,7 +1411,9 @@ export function ChatPanel({
                   onClick={() => setActiveMediaTab(tab)}
                   className={
                     "rounded-lg px-3 py-1.5 capitalize font-medium transition-colors " +
-                    (activeMediaTab === tab ? "bg-primary text-primary-foreground font-bold" : "text-muted-foreground hover:bg-secondary")
+                    (activeMediaTab === tab
+                      ? "bg-primary text-primary-foreground font-bold"
+                      : "text-muted-foreground hover:bg-secondary")
                   }
                 >
                   {tab === "all" ? "All Media" : tab + "s"}
@@ -1331,7 +1429,10 @@ export function ChatPanel({
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {filteredGallery.map((m) => (
-                    <div key={m.id} className="relative group rounded-xl border border-border bg-background p-2 flex flex-col justify-between">
+                    <div
+                      key={m.id}
+                      className="relative group rounded-xl border border-border bg-background p-2 flex flex-col justify-between"
+                    >
                       {m.kind === "image" && (
                         <img
                           src={m.dataUrl}
@@ -1341,18 +1442,26 @@ export function ChatPanel({
                         />
                       )}
                       {m.kind === "video" && (
-                        <video src={m.dataUrl} controls className="h-28 w-full object-cover rounded-lg bg-black" />
+                        <video
+                          src={m.dataUrl}
+                          controls
+                          className="h-28 w-full object-cover rounded-lg bg-black"
+                        />
                       )}
                       {m.kind === "audio" && (
                         <div className="p-3 flex flex-col items-center justify-center gap-2 bg-secondary/50 rounded-lg h-28 text-center">
                           <AudioLines className="size-8 text-primary" />
-                          <span className="text-[10px] font-semibold truncate w-full">{m.fileName || "Voice Note"}</span>
+                          <span className="text-[10px] font-semibold truncate w-full">
+                            {m.fileName || "Voice Note"}
+                          </span>
                         </div>
                       )}
                       {m.kind === "file" && (
                         <div className="p-3 flex flex-col items-center justify-center gap-2 bg-secondary/50 rounded-lg h-28 text-center">
                           <FileText className="size-8 text-primary" />
-                          <span className="text-[10px] font-semibold truncate w-full">{m.fileName || "Document"}</span>
+                          <span className="text-[10px] font-semibold truncate w-full">
+                            {m.fileName || "Document"}
+                          </span>
                         </div>
                       )}
                       <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
@@ -1381,7 +1490,9 @@ export function ChatPanel({
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <Star className="size-5 text-amber-400 fill-amber-400" />
-                <h3 className="font-bold text-sm">Starred Messages ({starredMessagesList.length})</h3>
+                <h3 className="font-bold text-sm">
+                  Starred Messages ({starredMessagesList.length})
+                </h3>
               </div>
               <button
                 type="button"
@@ -1395,7 +1506,8 @@ export function ChatPanel({
             <div className="thin-scroll flex-1 overflow-y-auto my-3 space-y-3 pr-1">
               {starredMessagesList.length === 0 ? (
                 <p className="py-10 text-center text-xs text-muted-foreground">
-                  No starred messages yet. Hover over any message and click the Star icon to bookmark it!
+                  No starred messages yet. Hover over any message and click the Star icon to
+                  bookmark it!
                 </p>
               ) : (
                 starredMessagesList.map((m) => (
@@ -1500,7 +1612,9 @@ export function ChatPanel({
 
             <div>
               <h4 className="font-bold text-sm text-foreground">{space.name}</h4>
-              <p className="text-xs text-muted-foreground mt-0.5">Scan or share link to join instantly</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Scan or share link to join instantly
+              </p>
             </div>
 
             <button
@@ -1613,7 +1727,10 @@ export function ChatPanel({
           }}
         >
           <div className="absolute right-5 top-5 flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1 rounded-full bg-card px-2 py-1 shadow-xl border border-border" onClick={(e) => e.stopPropagation()}>
+            <div
+              className="flex items-center gap-1 rounded-full bg-card px-2 py-1 shadow-xl border border-border"
+              onClick={(e) => e.stopPropagation()}
+            >
               <Sliders className="size-3.5 text-primary ml-1" />
               {(["none", "grayscale", "sepia", "vintage", "neon"] as PhotoFilter[]).map((f) => (
                 <button
@@ -1622,7 +1739,9 @@ export function ChatPanel({
                   onClick={() => setActivePhotoFilter(f)}
                   className={
                     "rounded-full px-2 py-0.5 text-[10px] font-medium capitalize transition-colors " +
-                    (activePhotoFilter === f ? "bg-primary text-primary-foreground font-bold" : "text-muted-foreground hover:text-foreground")
+                    (activePhotoFilter === f
+                      ? "bg-primary text-primary-foreground font-bold"
+                      : "text-muted-foreground hover:text-foreground")
                   }
                 >
                   {f}
@@ -1714,7 +1833,9 @@ export function ChatPanel({
           <div className="flex-1 overflow-y-auto p-4 space-y-4 thin-scroll">
             <div className="rounded-2xl bg-card border border-border p-3 space-y-1">
               <p className="text-[10px] font-bold text-primary">{activeThreadMessage.authorName}</p>
-              <p className="text-xs">{activeThreadMessage.text || activeThreadMessage.fileName || "Parent message"}</p>
+              <p className="text-xs">
+                {activeThreadMessage.text || activeThreadMessage.fileName || "Parent message"}
+              </p>
             </div>
 
             <div className="space-y-3 pt-2">
@@ -1745,7 +1866,10 @@ export function ChatPanel({
               onChange={(e) => setThreadText(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && threadText.trim()) {
-                  void push("text", { text: threadText.trim(), threadParentId: activeThreadMessage.id });
+                  void push("text", {
+                    text: threadText.trim(),
+                    threadParentId: activeThreadMessage.id,
+                  });
                   setThreadText("");
                 }
               }}
@@ -1756,7 +1880,10 @@ export function ChatPanel({
               type="button"
               onClick={() => {
                 if (threadText.trim()) {
-                  void push("text", { text: threadText.trim(), threadParentId: activeThreadMessage.id });
+                  void push("text", {
+                    text: threadText.trim(),
+                    threadParentId: activeThreadMessage.id,
+                  });
                   setThreadText("");
                 }
               }}
@@ -1788,22 +1915,30 @@ export function ChatPanel({
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="rounded-xl bg-secondary/70 p-3 text-center">
                 <p className="text-[10px] uppercase font-bold text-muted-foreground">Total Files</p>
-                <p className="text-lg font-bold font-mono text-primary mt-0.5">{messages.filter((m) => m.dataUrl).length}</p>
+                <p className="text-lg font-bold font-mono text-primary mt-0.5">
+                  {messages.filter((m) => m.dataUrl).length}
+                </p>
               </div>
               <div className="rounded-xl bg-secondary/70 p-3 text-center">
-                <p className="text-[10px] uppercase font-bold text-muted-foreground">Total Storage</p>
+                <p className="text-[10px] uppercase font-bold text-muted-foreground">
+                  Total Storage
+                </p>
                 <p className="text-lg font-bold font-mono text-emerald-400 mt-0.5">
                   {formatBytes(messages.reduce((acc, m) => acc + (m.fileSize || 0), 0))}
                 </p>
               </div>
               <div className="rounded-xl bg-secondary/70 p-3 text-center">
-                <p className="text-[10px] uppercase font-bold text-muted-foreground">Photos & Videos</p>
+                <p className="text-[10px] uppercase font-bold text-muted-foreground">
+                  Photos & Videos
+                </p>
                 <p className="text-lg font-bold font-mono text-sky-400 mt-0.5">
                   {messages.filter((m) => m.kind === "image" || m.kind === "video").length}
                 </p>
               </div>
               <div className="rounded-xl bg-secondary/70 p-3 text-center">
-                <p className="text-[10px] uppercase font-bold text-muted-foreground">Audio & Docs</p>
+                <p className="text-[10px] uppercase font-bold text-muted-foreground">
+                  Audio & Docs
+                </p>
                 <p className="text-lg font-bold font-mono text-purple-400 mt-0.5">
                   {messages.filter((m) => m.kind === "audio" || m.kind === "file").length}
                 </p>
@@ -1818,7 +1953,9 @@ export function ChatPanel({
                     type="button"
                     onClick={() => setStorageCategory(cat)}
                     className={`rounded-lg px-2.5 py-1 text-xs font-semibold capitalize transition-colors ${
-                      storageCategory === cat ? "bg-primary text-primary-foreground shadow-xs" : "bg-secondary text-muted-foreground hover:text-foreground"
+                      storageCategory === cat
+                        ? "bg-primary text-primary-foreground shadow-xs"
+                        : "bg-secondary text-muted-foreground hover:text-foreground"
                     }`}
                   >
                     {cat}
@@ -1838,13 +1975,25 @@ export function ChatPanel({
               {messages
                 .filter((m) => m.dataUrl)
                 .filter((m) => (storageCategory === "all" ? true : m.kind === storageCategory))
-                .filter((m) => (storageSearch.trim() ? (m.fileName || m.text || "").toLowerCase().includes(storageSearch.toLowerCase()) : true))
+                .filter((m) =>
+                  storageSearch.trim()
+                    ? (m.fileName || m.text || "")
+                        .toLowerCase()
+                        .includes(storageSearch.toLowerCase())
+                    : true,
+                )
                 .map((m) => (
-                  <div key={m.id} className="flex items-center justify-between rounded-xl bg-secondary/50 p-2.5 border border-border">
+                  <div
+                    key={m.id}
+                    className="flex items-center justify-between rounded-xl bg-secondary/50 p-2.5 border border-border"
+                  >
                     <div className="min-w-0 flex-1 pr-3">
-                      <p className="truncate text-xs font-semibold text-foreground">{m.fileName || `${m.kind} attachment`}</p>
+                      <p className="truncate text-xs font-semibold text-foreground">
+                        {m.fileName || `${m.kind} attachment`}
+                      </p>
                       <p className="text-[10px] text-muted-foreground font-mono">
-                        {m.fileSize ? formatBytes(m.fileSize) : "Unknown size"} • {new Date(m.createdAt).toLocaleDateString()}
+                        {m.fileSize ? formatBytes(m.fileSize) : "Unknown size"} •{" "}
+                        {new Date(m.createdAt).toLocaleDateString()}
                       </p>
                     </div>
                     {m.dataUrl && (
