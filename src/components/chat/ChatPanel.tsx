@@ -604,8 +604,7 @@ export function ChatPanel({
     toast.success(spaceNotificationsMuted ? "Space notifications enabled" : "Space muted");
   };
 
-  const publicAppUrl =
-    import.meta.env["VITE_PUBLIC_APP_URL"]?.trim().replace(/\/+$/, "") || "";
+  const publicAppUrl = import.meta.env["VITE_PUBLIC_APP_URL"]?.trim().replace(/\/+$/, "") || "";
   const browserOrigin = typeof window !== "undefined" ? window.location.origin : "";
   const canShareBrowserOrigin =
     typeof window !== "undefined" &&
