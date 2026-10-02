@@ -43,7 +43,7 @@ type CallSignal = {
   candidate?: RTCIceCandidateInit | undefined;
 };
 
-// High-Availability STUN & TURN Relay Servers for Long-Range 4G/5G, Symmetric NAT & Carrier Networks
+// TURN is required when carrier-grade NAT or firewalls prevent a direct peer connection.
 const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
     // Standard STUN Servers
@@ -55,7 +55,7 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: "stun:stun.services.mozilla.com" },
     { urls: "stun:global.stun.twilio.com:3478" },
     { urls: "stun:stun.cloudflare.com:3478" },
-    // Multi-port TCP & UDP TURN Relays (OpenRelay / Metered Relay fallback for restrictive firewalls & 4G/5G)
+    // Open Relay's documented public credentials and TCP/TLS fallbacks.
     {
       urls: [
         "turn:openrelay.metered.ca:80",
@@ -63,9 +63,10 @@ const ICE_SERVERS: RTCConfiguration = {
         "turn:openrelay.metered.ca:443?transport=tcp",
         "turn:openrelay.metered.ca:3478",
         "turn:openrelay.metered.ca:3478?transport=tcp",
+        "turns:openrelay.metered.ca:443?transport=tcp",
       ],
-      username: "openrelay",
-      credential: "openrelay",
+      username: "openrelayproject",
+      credential: "openrelayproject",
     },
   ],
   iceTransportPolicy: "all",
