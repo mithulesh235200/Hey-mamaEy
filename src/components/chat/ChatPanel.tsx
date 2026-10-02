@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { Capacitor } from "@capacitor/core";
+import { QRCodeSVG } from "qrcode.react";
 import {
   Image as ImageIcon,
   Menu,
@@ -37,6 +39,12 @@ import {
   MessageSquare,
   Music,
   HardDrive,
+  MoreHorizontal,
+  Plus,
+  Smile,
+  Trash2,
+  Bell,
+  BellOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -44,17 +52,25 @@ import {
   formatBytes,
   kindForFile,
   readFileAsDataUrl,
+  deleteSpaceForEveryone,
   deleteMessage,
   editMessage,
   sendMessage,
+  leaveSpace,
+  markSpaceMessagesRead,
+  markSpaceAsRead,
   type MediaKind,
   type Message,
   type Space,
 } from "@/lib/heymama";
 import { MessageBubble } from "./MessageBubble";
-import { InAppCall } from "./InAppCall";
+
+const InAppCall = lazy(() =>
+  import("./InAppCall").then((module) => ({ default: module.InAppCall })),
+);
 
 const MAX_BYTES = 50 * 1024 * 1024; // 50 MB limit
+const POLL_VOTE_PREFIX = "__poll_vote__:";
 
 function playChime(type: "send" | "receive", muted: boolean) {
   if (muted) return;
@@ -111,6 +127,7 @@ export function ChatPanel({
   displayName,
   onForward,
   onOpenSidebar,
+  mobileQuickBar,
 }: {
   space: Space | null;
   messages: Message[];
@@ -118,10 +135,14 @@ export function ChatPanel({
   displayName: string;
   onForward: (m: Message) => void;
   onOpenSidebar: () => void;
+  mobileQuickBar: boolean;
 }) {
   const [text, setText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
+  const [showMobileActions, setShowMobileActions] = useState(false);
+  const [showMobileAttachments, setShowMobileAttachments] = useState(false);
+  const [showMobileEmojis, setShowMobileEmojis] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [activePhotoFilter, setActivePhotoFilter] = useState<PhotoFilter>("none");
   const [recording, setRecording] = useState(false);
@@ -129,6 +150,12 @@ export function ChatPanel({
   const [editing, setEditing] = useState<Message | null>(null);
   const [pinnedMessage, setPinnedMessage] = useState<Message | null>(null);
   const [mutedSound, setMutedSound] = useState(false);
+  const [soundEffectsEnabled, setSoundEffectsEnabled] = useState(true);
+  const [typingIndicatorsEnabled, setTypingIndicatorsEnabled] = useState(true);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(
+    () => localStorage.getItem("heymamaey.notifications") === "true",
+  );
+  const [spaceNotificationsMuted, setSpaceNotificationsMuted] = useState(false);
   const [wallpaper, setWallpaper] = useState<WallpaperStyle>(() => {
     return (localStorage.getItem("heymamaey.wallpaper") as WallpaperStyle) || "default";
   });
@@ -179,6 +206,9 @@ export function ChatPanel({
   });
   const [showStarredModal, setShowStarredModal] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
+  const [showDeleteSpaceModal, setShowDeleteSpaceModal] = useState(false);
+  const [deleteSpaceMode, setDeleteSpaceMode] = useState<"me" | "everyone">("me");
+  const [deletingSpace, setDeletingSpace] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
   const [callMode, setCallMode] = useState<"voice" | "video" | null>(null);
   const [activeMembers, setActiveMembers] = useState<string[]>([]);
@@ -198,8 +228,30 @@ export function ChatPanel({
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typingExpiryRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const presenceChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const lastMsgCountRef = useRef(messages.length);
+  const knownMessageIdsRef = useRef(new Set(messages.map((message) => message.id)));
+  const notificationSpaceIdRef = useRef(space?.id);
+
+  useEffect(() => {
+    const syncPreferences = () => {
+      setSoundEffectsEnabled(localStorage.getItem("heymamaey.sounds") !== "false");
+      const typingEnabled = localStorage.getItem("heymamaey.typing") !== "false";
+      setTypingIndicatorsEnabled(typingEnabled);
+      setNotificationsEnabled(localStorage.getItem("heymamaey.notifications") === "true");
+      if (!typingEnabled) {
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        void presenceChannelRef.current?.send({
+          type: "broadcast",
+          event: "typing-stop",
+          payload: { name: displayName.trim() || "Anonymous", userId },
+        });
+      }
+    };
+    syncPreferences();
+    window.addEventListener("heymamaey:preferences-updated", syncPreferences);
+    return () => window.removeEventListener("heymamaey:preferences-updated", syncPreferences);
+  }, [displayName, userId]);
 
   useEffect(() => {
     if (space?.id) {
@@ -211,39 +263,90 @@ export function ChatPanel({
   }, [space?.id]);
 
   useEffect(() => {
-    if (
-      typeof window !== "undefined" &&
-      "Notification" in window &&
-      Notification.permission === "default"
-    ) {
-      void Notification.requestPermission();
+    if (!space?.id) return;
+    try {
+      const muted = JSON.parse(
+        localStorage.getItem("heymamaey.notificationMutedSpaces") || "[]",
+      ) as string[];
+      setSpaceNotificationsMuted(muted.includes(space.id));
+    } catch {
+      setSpaceNotificationsMuted(false);
     }
-  }, []);
+  }, [space?.id]);
 
   useEffect(() => {
-    if (messages.length > lastMsgCountRef.current) {
-      const last = messages[messages.length - 1];
-      if (last && last.authorId !== userId) {
-        playChime("receive", mutedSound);
-        if (
-          typeof window !== "undefined" &&
-          document.hidden &&
-          "Notification" in window &&
-          Notification.permission === "granted"
-        ) {
-          try {
-            new Notification(`New message in ${space?.name || "Space"}`, {
-              body: `${last.authorName}: ${last.text || last.fileName || "Shared media"}`,
-              icon: "/heymama.jpeg",
-            });
-          } catch {
-            /* ignore notification error */
-          }
+    if (!space || !userId || document.hidden) return;
+    let cancelled = false;
+    const markRead = async () => {
+      const ok = await markSpaceMessagesRead(space.code, userId);
+      if (ok && !cancelled) markSpaceAsRead(space.id);
+    };
+    void markRead();
+    const onVisibilityChange = () => {
+      if (!document.hidden) void markRead();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [space, userId, messages.length]);
+
+  useEffect(() => {
+    if (notificationSpaceIdRef.current !== space?.id) {
+      notificationSpaceIdRef.current = space?.id;
+      knownMessageIdsRef.current = new Set(messages.map((message) => message.id));
+      return;
+    }
+    const newlyReceived = messages.filter(
+      (message) =>
+        !knownMessageIdsRef.current.has(message.id) &&
+        message.authorId !== userId &&
+        !message.text?.startsWith("__poll_vote__:"),
+    );
+    messages.forEach((message) => knownMessageIdsRef.current.add(message.id));
+    if (knownMessageIdsRef.current.size > 1000) {
+      knownMessageIdsRef.current = new Set(messages.map((message) => message.id));
+    }
+    const last = newlyReceived.at(-1);
+    if (last) {
+      playChime("receive", mutedSound || !soundEffectsEnabled);
+      const mutedSpaceIds = (() => {
+        try {
+          return JSON.parse(
+            localStorage.getItem("heymamaey.notificationMutedSpaces") || "[]",
+          ) as string[];
+        } catch {
+          return [];
+        }
+      })();
+      if (
+        typeof window !== "undefined" &&
+        document.hidden &&
+        notificationsEnabled &&
+        !mutedSpaceIds.includes(last.spaceId) &&
+        "Notification" in window &&
+        Notification.permission === "granted"
+      ) {
+        try {
+          new Notification(`New message in ${space?.name || "Space"}`, {
+            body: `${last.authorName}: ${last.text || last.fileName || "Shared media"}`,
+            icon: "/heymama.jpeg",
+          });
+        } catch {
+          /* ignore notification error */
         }
       }
     }
-    lastMsgCountRef.current = messages.length;
-  }, [messages, userId, mutedSound, space?.name]);
+  }, [
+    messages,
+    userId,
+    mutedSound,
+    soundEffectsEnabled,
+    notificationsEnabled,
+    space?.id,
+    space?.name,
+  ]);
 
   const unlockSpace = () => {
     if (pinInput === spacePin) {
@@ -379,7 +482,20 @@ export function ChatPanel({
         { event: "typing-start" },
         ({ payload }: { payload: { name: string; userId: string } }) => {
           if (payload.userId === userId) return;
+          const previousTimer = typingExpiryRef.current.get(payload.userId);
+          if (previousTimer) clearTimeout(previousTimer);
           setTypingUsers((prev) => new Set(prev).add(payload.name));
+          typingExpiryRef.current.set(
+            payload.userId,
+            setTimeout(() => {
+              setTypingUsers((prev) => {
+                const next = new Set(prev);
+                next.delete(payload.name);
+                return next;
+              });
+              typingExpiryRef.current.delete(payload.userId);
+            }, 4000),
+          );
         },
       )
       .on(
@@ -387,6 +503,9 @@ export function ChatPanel({
         { event: "typing-stop" },
         ({ payload }: { payload: { name: string; userId: string } }) => {
           if (payload.userId === userId) return;
+          const timer = typingExpiryRef.current.get(payload.userId);
+          if (timer) clearTimeout(timer);
+          typingExpiryRef.current.delete(payload.userId);
           setTypingUsers((prev) => {
             const next = new Set(prev);
             next.delete(payload.name);
@@ -401,9 +520,12 @@ export function ChatPanel({
         }
       });
 
+    const typingTimers = typingExpiryRef.current;
     return () => {
       void channel.untrack();
       void channel.unsubscribe();
+      typingTimers.forEach(clearTimeout);
+      typingTimers.clear();
       presenceChannelRef.current = null;
       setActiveMembers([]);
       setTypingUsers(new Set());
@@ -414,6 +536,15 @@ export function ChatPanel({
     setText(val);
     if (!presenceChannelRef.current) return;
     const name = displayName.trim() || "Anonymous";
+
+    if (!typingIndicatorsEnabled) {
+      void presenceChannelRef.current.send({
+        type: "broadcast",
+        event: "typing-stop",
+        payload: { name, userId },
+      });
+      return;
+    }
 
     if (val.trim().length > 0) {
       void presenceChannelRef.current.send({
@@ -455,16 +586,79 @@ export function ChatPanel({
     setShowQrModal(true);
   };
 
-  const inviteUrl = `${window.location.origin}${window.location.pathname}?space=${encodeURIComponent(space?.code ?? "")}`;
+  const toggleSpaceNotifications = () => {
+    if (!space) return;
+    let mutedIds: string[] = [];
+    try {
+      mutedIds = JSON.parse(
+        localStorage.getItem("heymamaey.notificationMutedSpaces") || "[]",
+      ) as string[];
+    } catch {
+      mutedIds = [];
+    }
+    const nextMuted = spaceNotificationsMuted
+      ? mutedIds.filter((id) => id !== space.id)
+      : [...new Set([...mutedIds, space.id])];
+    localStorage.setItem("heymamaey.notificationMutedSpaces", JSON.stringify(nextMuted));
+    setSpaceNotificationsMuted(!spaceNotificationsMuted);
+    toast.success(spaceNotificationsMuted ? "Space notifications enabled" : "Space muted");
+  };
+
+  const publicAppUrl =
+    import.meta.env["VITE_PUBLIC_APP_URL"]?.trim().replace(/\/+$/, "") || "";
+  const browserOrigin = typeof window !== "undefined" ? window.location.origin : "";
+  const canShareBrowserOrigin =
+    typeof window !== "undefined" &&
+    !["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+  const inviteBaseUrl =
+    publicAppUrl || (Capacitor.isNativePlatform() || !canShareBrowserOrigin ? "" : browserOrigin);
+  const inviteUrl =
+    inviteBaseUrl && space
+      ? `${inviteBaseUrl}${window.location.pathname}?space=${encodeURIComponent(space.code)}`
+      : "";
 
   const copyInviteLink = async () => {
     try {
-      await navigator.clipboard.writeText(inviteUrl);
+      const valueToCopy = inviteUrl || space?.code;
+      if (!valueToCopy) return;
+      await navigator.clipboard.writeText(valueToCopy);
       setCopiedInvite(true);
-      toast.success("Invite link copied!");
+      toast.success(inviteUrl ? "Invite link copied!" : "Space code copied!");
       setTimeout(() => setCopiedInvite(false), 2000);
     } catch {
       toast.error("Couldn't copy invite link");
+    }
+  };
+
+  const confirmDeleteSpace = async () => {
+    if (!space || deletingSpace) return;
+    setDeletingSpace(true);
+    try {
+      if (deleteSpaceMode === "me") {
+        const removed = leaveSpace(space.id);
+        if (removed) {
+          toast.success(`Removed “${space.name}” from your spaces`);
+          setShowDeleteSpaceModal(false);
+        } else {
+          toast.error("Couldn't remove this space from your account");
+        }
+        return;
+      }
+
+      if (space.ownerId !== userId) {
+        toast.error("Only the space owner can delete it for everyone");
+        return;
+      }
+
+      const removed = await deleteSpaceForEveryone(space.id);
+      if (removed) {
+        toast.success(`“${space.name}” was deleted for everyone`);
+        setShowDeleteSpaceModal(false);
+      } else {
+        toast.error("Couldn't delete the space for everyone. Check the connection and try again.");
+      }
+    } finally {
+      setDeletingSpace(false);
     }
   };
 
@@ -500,6 +694,7 @@ export function ChatPanel({
   }
 
   const filteredMessages = messages.filter((m) => {
+    if (m.text?.startsWith(POLL_VOTE_PREFIX)) return false;
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
     return (
@@ -523,7 +718,7 @@ export function ChatPanel({
   ) => {
     const ok = await sendMessage({ spaceId: space.id, kind, ...extra });
     if (ok) {
-      playChime("send", mutedSound);
+      playChime("send", mutedSound || !soundEffectsEnabled);
     } else {
       toast.error("Message failed to send — check your connection");
     }
@@ -553,7 +748,7 @@ export function ChatPanel({
     const ok = await sendMessage({ spaceId: space.id, kind: "text", text: value });
     if (ok) {
       setText("");
-      playChime("send", mutedSound);
+      playChime("send", mutedSound || !soundEffectsEnabled);
     } else {
       toast.error("Message failed to send — check your connection");
     }
@@ -579,7 +774,7 @@ export function ChatPanel({
       setShowPollModal(false);
       setPollQuestion("");
       setPollOptions(["", ""]);
-      playChime("send", mutedSound);
+      playChime("send", mutedSound || !soundEffectsEnabled);
     } else {
       toast.error("Couldn't create poll");
     }
@@ -672,6 +867,7 @@ export function ChatPanel({
   };
 
   const playFX = (name: string) => {
+    if (!soundEffectsEnabled || mutedSound) return;
     try {
       const AudioCtx =
         window.AudioContext ||
@@ -720,7 +916,7 @@ export function ChatPanel({
     setShowSoundboard(false);
   };
 
-  const typingArray = Array.from(typingUsers);
+  const typingArray = typingIndicatorsEnabled ? Array.from(typingUsers) : [];
 
   const getWallpaperStyle = () => {
     if (wallpaper === "dots") {
@@ -792,200 +988,288 @@ export function ChatPanel({
 
   return (
     <section
-      className="chat-canvas flex h-full min-w-0 flex-1 flex-col"
+      className={`chat-canvas flex h-full min-w-0 flex-1 flex-col ${mobileQuickBar ? "pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0" : ""}`}
       style={getWallpaperStyle()}
     >
-      <header className="flex flex-col border-b border-border bg-sidebar px-3 py-2.5 sm:px-4 sm:py-3">
+      <header className="relative flex flex-col border-b border-border bg-sidebar px-3 py-2.5 sm:px-4 sm:py-3">
         <div className="flex items-center gap-2 sm:gap-3">
           <button
             type="button"
             onClick={onOpenSidebar}
-            className="inline-flex items-center gap-1 rounded-xl bg-primary px-2.5 py-1.5 text-xs font-bold text-primary-foreground shadow-xs transition-opacity hover:opacity-90 md:hidden shrink-0"
-            aria-label="Open spaces menu"
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-xs transition-opacity hover:opacity-90 md:hidden"
+            aria-label="Back to spaces"
           >
             <ChevronLeft className="size-4" />
-            <span>Spaces</span>
           </button>
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-sm font-bold text-foreground">{space.name}</h2>
-            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-              <span className="font-mono text-primary font-semibold">Code: {space.code}</span>
-              <span className="flex items-center gap-1">
+            <div className="flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
+              <span className="shrink-0 whitespace-nowrap font-mono font-semibold text-primary">
+                Code: {space.code}
+              </span>
+              <span className="hidden min-w-0 items-center gap-1 truncate md:flex">
                 <span className="size-1.5 rounded-full bg-emerald-400" />
-                {activeMembers.length} active
+                <span className="truncate">
+                  {activeMembers.filter((name) => name !== (displayName.trim() || "Anonymous"))
+                    .length > 0
+                    ? activeMembers
+                        .filter((name) => name !== (displayName.trim() || "Anonymous"))
+                        .join(", ")
+                    : "Only you here"}
+                </span>
               </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-1 overflow-x-auto thin-scroll max-w-[50%] sm:max-w-none">
-            <button
-              type="button"
-              onClick={() => setShowPinSetup((v) => !v)}
-              title={spacePin ? "Lock Space / PIN Settings" : "Set Space PIN Lock"}
-              className={
-                "rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0 " +
-                (spacePin ? "text-primary ring-1 ring-primary/40" : "")
-              }
-            >
-              {spacePin ? <Lock className="size-4 text-primary" /> : <Unlock className="size-4" />}
-            </button>
-
-            <div className="relative shrink-0">
-              <button
-                type="button"
-                onClick={() => setShowDisappearingMenu((v) => !v)}
-                title="Disappearing Messages"
-                className={
-                  "rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors " +
-                  (disappearingTimer !== "off" ? "text-primary ring-1 ring-primary" : "")
-                }
-              >
-                <Clock className="size-4" />
-              </button>
-              {showDisappearingMenu && (
-                <div className="absolute right-0 top-10 z-40 w-40 rounded-xl border border-border bg-card p-1.5 shadow-2xl animate-in zoom-in-95 duration-150">
-                  <div className="px-2 py-1 text-[10px] uppercase font-bold text-muted-foreground">
-                    Auto-destruct
-                  </div>
-                  {(["off", "24h", "7d", "30d"] as DisappearingTimer[]).map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => changeDisappearingTimer(t)}
-                      className={
-                        "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors " +
-                        (disappearingTimer === t
-                          ? "bg-primary text-primary-foreground font-semibold"
-                          : "hover:bg-secondary text-muted-foreground")
-                      }
-                    >
-                      <span>{t === "off" ? "Off (Permanent)" : t}</span>
-                      {disappearingTimer === t && <Check className="size-3" />}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={exportChatHistory}
-              title="Export Chat Backup"
-              className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0"
-            >
-              <FileDown className="size-4" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowGalleryModal(true)}
-              title="Space Media Gallery"
-              className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0"
-            >
-              <FolderOpen className="size-4" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowStorageManager(true)}
-              title="Space Storage Manager"
-              className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0"
-            >
-              <HardDrive className="size-4 text-amber-400" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setMutedSound((v) => !v)}
-              title={mutedSound ? "Unmute sounds" : "Mute sounds"}
-              className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0"
-            >
-              {mutedSound ? (
-                <VolumeX className="size-4 text-destructive" />
-              ) : (
-                <Volume2 className="size-4 text-primary" />
-              )}
-            </button>
-
-            <div className="relative shrink-0">
-              <button
-                type="button"
-                onClick={() => setShowWallpaperMenu((v) => !v)}
-                title="Chat Wallpaper"
-                className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors"
-              >
-                <Sparkles className="size-4" />
-              </button>
-              {showWallpaperMenu && (
-                <div className="absolute right-0 top-10 z-40 w-36 rounded-xl border border-border bg-card p-1.5 shadow-2xl animate-in zoom-in-95 duration-150">
-                  {(["default", "dots", "grid", "cosmic"] as WallpaperStyle[]).map((w) => (
-                    <button
-                      key={w}
-                      type="button"
-                      onClick={() => changeWallpaper(w)}
-                      className={
-                        "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs capitalize transition-colors " +
-                        (wallpaper === w
-                          ? "bg-primary text-primary-foreground font-semibold"
-                          : "hover:bg-secondary text-muted-foreground")
-                      }
-                    >
-                      <span>{w}</span>
-                      {wallpaper === w && <Check className="size-3" />}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setShowStarredModal(true)}
-              title="Starred Messages"
-              className="relative rounded-xl bg-card p-2 text-muted-foreground hover:text-amber-400 transition-colors shrink-0"
-            >
-              <Star className="size-4" />
-              {starredIds.size > 0 && (
-                <span className="absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-amber-500 font-mono text-[9px] font-bold text-black shadow-sm">
-                  {starredIds.size}
-                </span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowSearch((v) => !v)}
-              title="Search messages"
-              className={
-                "rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0 " +
-                (showSearch ? "text-primary ring-1 ring-primary" : "")
-              }
-            >
-              <Search className="size-4" />
-            </button>
+          <div className="flex shrink-0 items-center gap-1 md:hidden">
             <button
               type="button"
               onClick={() => void shareSpace()}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-secondary px-2.5 py-2 text-xs font-semibold transition-colors hover:text-primary shrink-0"
+              aria-label="Share space"
+              title="Share space"
+              className="mobile-icon-button !size-9"
             >
-              <Share2 className="size-3.5" />
-              <span className="hidden sm:inline">Share</span>
+              <Share2 className="size-4" />
             </button>
-            <IconBtn
-              label="Start voice call"
+            <button
+              type="button"
               onClick={() => setCallMode("voice")}
-              className="shrink-0"
+              aria-label="Start voice call"
+              title="Voice call"
+              className="mobile-icon-button !size-9"
             >
-              <Phone className="size-3.5" />
-            </IconBtn>
-            <IconBtn
-              label="Start video call"
+              <Phone className="size-4" />
+            </button>
+            <button
+              type="button"
               onClick={() => setCallMode("video")}
-              className="shrink-0"
+              aria-label="Start video call"
+              title="Video call"
+              className="mobile-icon-button !size-9"
             >
-              <Video className="size-3.5" />
-            </IconBtn>
+              <Video className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowMobileActions((value) => !value)}
+              aria-label={showMobileActions ? "Hide space actions" : "Show space actions"}
+              aria-expanded={showMobileActions}
+              title="More space actions"
+              className="mobile-icon-button !size-9"
+            >
+              <MoreHorizontal className="size-5" />
+            </button>
           </div>
+        </div>
+
+        <div className="ml-11 mt-1 flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground md:hidden">
+          <span className="size-1.5 shrink-0 rounded-full bg-emerald-400" />
+          <span className="truncate">
+            {activeMembers.filter((name) => name !== (displayName.trim() || "Anonymous")).length > 0
+              ? activeMembers
+                  .filter((name) => name !== (displayName.trim() || "Anonymous"))
+                  .join(", ")
+              : "Only you here"}
+          </span>
+        </div>
+
+        <div
+          className={`${showMobileActions ? "grid grid-cols-5" : "hidden"} mt-3 gap-2 rounded-2xl border border-border bg-background/50 p-2 md:mt-0 md:flex md:flex-nowrap md:gap-1 md:overflow-x-auto md:rounded-none md:border-0 md:bg-transparent md:p-0`}
+        >
+          <button
+            type="button"
+            onClick={() => setShowPinSetup((v) => !v)}
+            title={spacePin ? "Lock Space / PIN Settings" : "Set Space PIN Lock"}
+            className={
+              "rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0 " +
+              (spacePin ? "text-primary ring-1 ring-primary/40" : "")
+            }
+          >
+            {spacePin ? <Lock className="size-4 text-primary" /> : <Unlock className="size-4" />}
+          </button>
+
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowDisappearingMenu((v) => !v)}
+              title="Disappearing Messages"
+              className={
+                "rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors " +
+                (disappearingTimer !== "off" ? "text-primary ring-1 ring-primary" : "")
+              }
+            >
+              <Clock className="size-4" />
+            </button>
+            {showDisappearingMenu && (
+              <div className="absolute right-0 top-10 z-40 w-40 rounded-xl border border-border bg-card p-1.5 shadow-2xl animate-in zoom-in-95 duration-150">
+                <div className="px-2 py-1 text-[10px] uppercase font-bold text-muted-foreground">
+                  Auto-destruct
+                </div>
+                {(["off", "24h", "7d", "30d"] as DisappearingTimer[]).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => changeDisappearingTimer(t)}
+                    className={
+                      "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors " +
+                      (disappearingTimer === t
+                        ? "bg-primary text-primary-foreground font-semibold"
+                        : "hover:bg-secondary text-muted-foreground")
+                    }
+                  >
+                    <span>{t === "off" ? "Off (Permanent)" : t}</span>
+                    {disappearingTimer === t && <Check className="size-3" />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={exportChatHistory}
+            title="Export Chat Backup"
+            className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0"
+          >
+            <FileDown className="size-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowGalleryModal(true)}
+            title="Space Media Gallery"
+            className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0"
+          >
+            <FolderOpen className="size-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowStorageManager(true)}
+            title="Space Storage Manager"
+            className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0"
+          >
+            <HardDrive className="size-4 text-amber-400" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMutedSound((v) => !v)}
+            title={mutedSound || !soundEffectsEnabled ? "Unmute sounds" : "Mute sounds"}
+            aria-pressed={mutedSound || !soundEffectsEnabled}
+            className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0"
+          >
+            {mutedSound || !soundEffectsEnabled ? (
+              <VolumeX className="size-4 text-destructive" />
+            ) : (
+              <Volume2 className="size-4 text-primary" />
+            )}
+          </button>
+
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowWallpaperMenu((v) => !v)}
+              title="Chat Wallpaper"
+              className="rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors"
+            >
+              <Sparkles className="size-4" />
+            </button>
+            {showWallpaperMenu && (
+              <div className="absolute right-0 top-10 z-40 w-36 rounded-xl border border-border bg-card p-1.5 shadow-2xl animate-in zoom-in-95 duration-150">
+                {(["default", "dots", "grid", "cosmic"] as WallpaperStyle[]).map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    onClick={() => changeWallpaper(w)}
+                    className={
+                      "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs capitalize transition-colors " +
+                      (wallpaper === w
+                        ? "bg-primary text-primary-foreground font-semibold"
+                        : "hover:bg-secondary text-muted-foreground")
+                    }
+                  >
+                    <span>{w}</span>
+                    {wallpaper === w && <Check className="size-3" />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowStarredModal(true)}
+            title="Starred Messages"
+            className="relative rounded-xl bg-card p-2 text-muted-foreground hover:text-amber-400 transition-colors shrink-0"
+          >
+            <Star className="size-4" />
+            {starredIds.size > 0 && (
+              <span className="absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-amber-500 font-mono text-[9px] font-bold text-black shadow-sm">
+                {starredIds.size}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowSearch((v) => !v)}
+            title="Search messages"
+            className={
+              "rounded-xl bg-card p-2 text-muted-foreground hover:text-primary transition-colors shrink-0 " +
+              (showSearch ? "text-primary ring-1 ring-primary" : "")
+            }
+          >
+            <Search className="size-4" />
+          </button>
+          <button
+            type="button"
+            onClick={toggleSpaceNotifications}
+            title={
+              spaceNotificationsMuted ? "Unmute space notifications" : "Mute space notifications"
+            }
+            aria-label={
+              spaceNotificationsMuted ? "Unmute space notifications" : "Mute space notifications"
+            }
+            aria-pressed={spaceNotificationsMuted}
+            className={`rounded-xl bg-card p-2 transition-colors shrink-0 ${spaceNotificationsMuted ? "text-muted-foreground" : "text-primary hover:text-primary"}`}
+          >
+            {spaceNotificationsMuted ? <BellOff className="size-4" /> : <Bell className="size-4" />}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDeleteSpaceMode("me");
+              setShowDeleteSpaceModal(true);
+            }}
+            title="Delete space"
+            aria-label="Delete space"
+            className="rounded-xl bg-card p-2 text-destructive transition-colors hover:bg-destructive/10 shrink-0"
+          >
+            <Trash2 className="size-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => void shareSpace()}
+            className="hidden shrink-0 items-center gap-1.5 rounded-xl bg-secondary px-2.5 py-2 text-xs font-semibold transition-colors hover:text-primary md:inline-flex"
+          >
+            <Share2 className="size-3.5" />
+            <span className="hidden sm:inline">Share</span>
+          </button>
+          <IconBtn
+            label="Start voice call"
+            onClick={() => setCallMode("voice")}
+            className="hidden shrink-0 md:inline-flex"
+          >
+            <Phone className="size-3.5" />
+          </IconBtn>
+          <IconBtn
+            label="Start video call"
+            onClick={() => setCallMode("video")}
+            className="hidden shrink-0 md:inline-flex"
+          >
+            <Video className="size-3.5" />
+          </IconBtn>
         </div>
 
         {showSearch && (
@@ -1050,6 +1334,25 @@ export function ChatPanel({
             key={m.id}
             message={m}
             mine={m.authorId === userId}
+            allMessages={messages}
+            currentUserId={userId}
+            onPollVote={(poll, option) => {
+              const voteText = `${POLL_VOTE_PREFIX}${poll.id}:${option}`;
+              const previousVote = [...messages]
+                .reverse()
+                .find(
+                  (candidate) =>
+                    candidate.authorId === userId &&
+                    candidate.text?.startsWith(`${POLL_VOTE_PREFIX}${poll.id}:`),
+                );
+              if (previousVote?.text === voteText) return;
+              void sendMessage({ spaceId: poll.spaceId, kind: "text", text: voteText }).then(
+                (sent) => {
+                  if (!sent)
+                    toast.error("Your poll vote could not be saved. Check your connection.");
+                },
+              );
+            }}
             onForward={onForward}
             onOpenImage={setLightbox}
             onPin={(message) => {
@@ -1088,7 +1391,7 @@ export function ChatPanel({
       </div>
 
       <footer className="border-t border-border bg-sidebar p-3">
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 hidden items-center justify-between md:flex">
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
             {QUICK_EMOJIS.map((emoji) => (
               <button
@@ -1249,8 +1552,72 @@ export function ChatPanel({
             </button>
           </div>
         )}
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="flex shrink-0 gap-1">
+        {showMobileEmojis && (
+          <div className="mb-2 flex gap-2 overflow-x-auto md:hidden">
+            {QUICK_EMOJIS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => setText((value) => value + emoji)}
+                className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-card text-lg"
+                aria-label={`Insert ${emoji}`}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+        {showMobileAttachments && (
+          <div className="mb-2 grid grid-cols-3 gap-2 md:hidden">
+            {[
+              {
+                label: "Photo or video",
+                action: () => mediaInputRef.current?.click(),
+                icon: <ImageIcon className="size-4" />,
+              },
+              {
+                label: "Document",
+                action: () => fileInputRef.current?.click(),
+                icon: <Paperclip className="size-4" />,
+              },
+              {
+                label: "Audio file",
+                action: () => audioInputRef.current?.click(),
+                icon: <AudioLines className="size-4" />,
+              },
+              {
+                label: "Share location",
+                action: handleShareLocation,
+                icon: <MapPin className="size-4" />,
+              },
+              {
+                label: "Soundboard",
+                action: () => setShowSoundboard((value) => !value),
+                icon: <Music className="size-4" />,
+              },
+              {
+                label: "Create poll",
+                action: () => setShowPollModal(true),
+                icon: <BarChart2 className="size-4" />,
+              },
+            ].map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => {
+                  setShowMobileAttachments(false);
+                  item.action();
+                }}
+                className="flex min-h-11 items-center gap-2 rounded-xl border border-border bg-card px-3 text-xs font-medium"
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex items-end gap-2 md:flex-wrap">
+          <div className="hidden shrink-0 gap-1 md:flex">
             <IconBtn label="Send image" onClick={() => mediaInputRef.current?.click()}>
               <ImageIcon className="size-4" />
             </IconBtn>
@@ -1270,6 +1637,24 @@ export function ChatPanel({
               <BarChart2 className="size-4" />
             </IconBtn>
           </div>
+          <button
+            type="button"
+            onClick={() => setShowMobileEmojis((value) => !value)}
+            aria-label="Show emoji picker"
+            aria-expanded={showMobileEmojis}
+            className="mobile-icon-button size-11 shrink-0 md:hidden"
+          >
+            <Smile className="size-5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowMobileAttachments((value) => !value)}
+            aria-label="Show attachment options"
+            aria-expanded={showMobileAttachments}
+            className="mobile-icon-button size-11 shrink-0 md:hidden"
+          >
+            <Plus className="size-5" />
+          </button>
           <textarea
             value={text}
             onChange={(e) => handleTyping(e.target.value)}
@@ -1280,8 +1665,8 @@ export function ChatPanel({
               }
             }}
             rows={1}
-            placeholder="Message — **bold**, _italic_, `code`, emoji 🎉"
-            className="thin-scroll order-2 min-w-[min(100%,12rem)] max-h-32 min-h-10 flex-1 resize-none rounded-xl bg-card px-3 py-2.5 text-sm outline-none ring-1 ring-input focus:ring-primary sm:order-none"
+            placeholder="Message..."
+            className="thin-scroll min-w-0 max-h-32 min-h-11 flex-1 resize-none rounded-xl bg-card px-3 py-2.5 text-sm outline-none ring-1 ring-input focus:ring-primary md:min-w-[min(100%,12rem)]"
           />
           <IconBtn
             label={recording ? "Stop recording" : "Record voice note"}
@@ -1294,7 +1679,7 @@ export function ChatPanel({
             type="button"
             onClick={() => void submitText()}
             aria-label="Send message"
-            className="order-2 flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-transform hover:scale-105 sm:order-none"
+            className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-transform hover:scale-105"
           >
             <Send className="size-4" />
           </button>
@@ -1545,6 +1930,95 @@ export function ChatPanel({
         </div>
       )}
 
+      {showDeleteSpaceModal && space && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-space-title"
+            className="w-full max-w-sm space-y-4 rounded-2xl border border-border bg-card p-5 shadow-2xl"
+          >
+            <div className="flex items-start gap-3">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
+                <Trash2 className="size-5" />
+              </span>
+              <div>
+                <h3 id="delete-space-title" className="font-bold">
+                  Delete “{space.name}”?
+                </h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Choose whether to remove it just from your list or for everyone.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border p-3">
+                <input
+                  type="radio"
+                  name="delete-space-mode"
+                  value="me"
+                  checked={deleteSpaceMode === "me"}
+                  onChange={() => setDeleteSpaceMode("me")}
+                  className="mt-0.5 accent-primary"
+                />
+                <span>
+                  <span className="block text-sm font-semibold">Delete for me</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Removes this space and its messages from your device. Others keep access.
+                  </span>
+                </span>
+              </label>
+
+              <label
+                className={`flex items-start gap-3 rounded-xl border border-border p-3 ${space.ownerId === userId ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}
+              >
+                <input
+                  type="radio"
+                  name="delete-space-mode"
+                  value="everyone"
+                  checked={deleteSpaceMode === "everyone"}
+                  onChange={() => setDeleteSpaceMode("everyone")}
+                  disabled={space.ownerId !== userId}
+                  className="mt-0.5 accent-destructive"
+                />
+                <span>
+                  <span className="block text-sm font-semibold">Delete for everyone</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Permanently deletes the space and all its messages for every member.
+                  </span>
+                </span>
+              </label>
+              {space.ownerId !== userId && (
+                <p className="px-1 text-[11px] text-muted-foreground">
+                  Only the owner can delete for everyone. This space may have been created before
+                  ownership tracking was added.
+                </p>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowDeleteSpaceModal(false)}
+                disabled={deletingSpace}
+                className="rounded-xl px-4 py-2.5 text-sm font-semibold text-muted-foreground hover:bg-secondary disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDeleteSpace()}
+                disabled={deletingSpace}
+                className="rounded-xl bg-destructive px-4 py-2.5 text-sm font-semibold text-destructive-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                {deletingSpace ? "Deleting…" : "Delete space"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {/* Space QR Invite Modal */}
       {showQrModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
@@ -1563,48 +2037,14 @@ export function ChatPanel({
               </button>
             </div>
 
-            <div className="flex flex-col items-center p-4 bg-white rounded-2xl shadow-inner border border-border">
-              {/* Elegant SVG QR Code visual */}
-              <svg className="size-40 text-slate-900" viewBox="0 0 100 100" fill="currentColor">
-                <rect width="100" height="100" fill="white" />
-                {/* QR Positioning Squares */}
-                <rect x="5" y="5" width="25" height="25" rx="4" />
-                <rect x="10" y="10" width="15" height="15" fill="white" />
-                <rect x="13" y="13" width="9" height="9" />
-
-                <rect x="70" y="5" width="25" height="25" rx="4" />
-                <rect x="75" y="10" width="15" height="15" fill="white" />
-                <rect x="78" y="13" width="9" height="9" />
-
-                <rect x="5" y="70" width="25" height="25" rx="4" />
-                <rect x="10" y="75" width="15" height="15" fill="white" />
-                <rect x="13" y="78" width="9" height="9" />
-
-                {/* Data dots */}
-                <rect x="40" y="10" width="8" height="8" />
-                <rect x="52" y="10" width="8" height="8" />
-                <rect x="36" y="24" width="8" height="8" />
-                <rect x="48" y="24" width="8" height="8" />
-                <rect x="10" y="40" width="8" height="8" />
-                <rect x="22" y="40" width="8" height="8" />
-                <rect x="36" y="40" width="10" height="10" />
-                <rect x="50" y="40" width="8" height="8" />
-                <rect x="64" y="40" width="8" height="8" />
-                <rect x="78" y="40" width="8" height="8" />
-                <rect x="10" y="52" width="8" height="8" />
-                <rect x="24" y="52" width="8" height="8" />
-                <rect x="40" y="54" width="8" height="8" />
-                <rect x="54" y="54" width="8" height="8" />
-                <rect x="68" y="54" width="8" height="8" />
-                <rect x="40" y="70" width="8" height="8" />
-                <rect x="54" y="70" width="8" height="8" />
-                <rect x="70" y="70" width="10" height="10" />
-                <rect x="84" y="70" width="8" height="8" />
-                <rect x="40" y="84" width="8" height="8" />
-                <rect x="56" y="84" width="8" height="8" />
-                <rect x="72" y="84" width="8" height="8" />
-                <rect x="84" y="84" width="8" height="8" />
-              </svg>
+            <div className="flex flex-col items-center rounded-2xl border border-border bg-white p-4 shadow-inner">
+              <QRCodeSVG
+                value={inviteUrl || space.code}
+                size={224}
+                level="M"
+                includeMargin
+                title={inviteUrl ? `Join ${space.name}` : `Space code ${space.code}`}
+              />
               <p className="mt-2 text-xs font-mono font-bold text-slate-800 tracking-wider">
                 SPACE CODE: {space.code}
               </p>
@@ -1613,7 +2053,9 @@ export function ChatPanel({
             <div>
               <h4 className="font-bold text-sm text-foreground">{space.name}</h4>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Scan or share link to join instantly
+                {inviteUrl
+                  ? "Scan to open the invite and join this Space."
+                  : "Scan the code, then enter this Space number in the app to join."}
               </p>
             </div>
 
@@ -1623,7 +2065,9 @@ export function ChatPanel({
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-xs font-bold text-primary-foreground transition-transform hover:scale-102"
             >
               {copiedInvite ? <Check className="size-4" /> : <Copy className="size-4" />}
-              <span>{copiedInvite ? "Copied Link!" : "Copy Invite Link"}</span>
+              <span>
+                {copiedInvite ? "Copied!" : inviteUrl ? "Copy Invite Link" : "Copy Space Code"}
+              </span>
             </button>
           </div>
         </div>
@@ -2012,12 +2456,16 @@ export function ChatPanel({
         </div>
       )}
 
-      <InAppCall
-        spaceCode={space.code}
-        userId={userId}
-        requestedMode={callMode}
-        onClose={() => setCallMode(null)}
-      />
+      {callMode && (
+        <Suspense fallback={null}>
+          <InAppCall
+            spaceCode={space.code}
+            userId={userId}
+            requestedMode={callMode}
+            onClose={() => setCallMode(null)}
+          />
+        </Suspense>
+      )}
     </section>
   );
 }

@@ -13,6 +13,26 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 
 type CallMode = "voice" | "video";
+
+function getMediaPermissionMessage(error: unknown, mode: CallMode) {
+  if (typeof window !== "undefined" && !window.isSecureContext) {
+    return "Calls require a secure HTTPS connection. Open this app using its HTTPS address and try again.";
+  }
+
+  const name = error instanceof DOMException ? error.name : "";
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return `Allow microphone${mode === "video" ? " and camera" : ""} access in your browser or device settings, then try again.`;
+  }
+  if (name === "NotFoundError" || name === "OverconstrainedError") {
+    return mode === "video"
+      ? "No usable camera or microphone was found on this device."
+      : "No usable microphone was found on this device.";
+  }
+  if (name === "NotReadableError" || name === "AbortError") {
+    return "The microphone or camera is busy in another app. Close that app and try again.";
+  }
+  return "Could not access the microphone or camera. Check device permissions and try again.";
+}
 type CallSignal = {
   callId: string;
   from: string;
@@ -231,6 +251,10 @@ export function InAppCall({
   };
 
   const getUserMediaWithFallback = async (requestedCallMode: CallMode) => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error(getMediaPermissionMessage(null, requestedCallMode));
+    }
+
     try {
       return await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -250,12 +274,16 @@ export function InAppCall({
     } catch {
       if (requestedCallMode === "video") {
         // Fall back to voice if video permissions fail
-        return await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-          video: false,
-        });
+        try {
+          return await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+            video: false,
+          });
+        } catch (error) {
+          throw new Error(getMediaPermissionMessage(error, requestedCallMode));
+        }
       }
-      throw new Error("Microphone or camera permission denied.");
+      throw new Error(getMediaPermissionMessage(error, requestedCallMode));
     }
   };
 
@@ -779,7 +807,7 @@ export function InAppCall({
       )}
 
       {error && !active && !incoming && (
-        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-destructive px-5 py-2.5 text-xs font-semibold text-destructive-foreground shadow-2xl animate-in fade-in duration-200">
+        <div className="fixed left-1/2 top-[calc(env(safe-area-inset-top)+1rem)] z-50 w-[min(24rem,calc(100%-2rem))] -translate-x-1/2 rounded-xl bg-destructive px-4 py-3 text-center text-xs font-semibold text-destructive-foreground shadow-2xl animate-in fade-in duration-200">
           {error}
         </div>
       )}

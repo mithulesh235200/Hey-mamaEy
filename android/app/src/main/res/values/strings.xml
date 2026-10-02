@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">HeyMamaEy</string>
+    <string name="title_activity_main">HeyMamaEy</string>
+    <string name="package_name">com.heymamaey.chat</string>
+    <string name="custom_url_scheme">com.heymamaey.chat</string>
+</resources>

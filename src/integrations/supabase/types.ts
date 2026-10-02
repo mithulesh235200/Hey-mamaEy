@@ -20,6 +20,7 @@ export type Database = {
           id: string;
           kind: string;
           mime_type: string | null;
+          read_at: string | null;
           space_id: string;
           text: string | null;
         };
@@ -34,6 +35,7 @@ export type Database = {
           id?: string;
           kind?: string;
           mime_type?: string | null;
+          read_at?: string | null;
           space_id: string;
           text?: string | null;
         };
@@ -48,6 +50,7 @@ export type Database = {
           id?: string;
           kind?: string;
           mime_type?: string | null;
+          read_at?: string | null;
           space_id?: string;
           text?: string | null;
         };
@@ -67,18 +70,21 @@ export type Database = {
           created_at: string;
           id: string;
           name: string;
+          owner_id: string | null;
         };
         Insert: {
           code: string;
           created_at?: string;
           id?: string;
           name: string;
+          owner_id?: string | null;
         };
         Update: {
           code?: string;
           created_at?: string;
           id?: string;
           name?: string;
+          owner_id?: string | null;
         };
         Relationships: [];
       };
@@ -100,6 +106,7 @@ export type Database = {
           id: string;
           kind: string;
           mime_type: string | null;
+          read_at: string | null;
           space_id: string;
           text: string | null;
         }[];
@@ -121,17 +128,19 @@ export type Database = {
           id: string;
           kind: string;
           mime_type: string | null;
+          read_at: string | null;
           space_id: string;
           text: string | null;
         };
       };
       create_space: {
-        Args: { p_name: string };
+        Args: { p_name: string; p_owner_id: string };
         Returns: {
           code: string;
           created_at: string;
           id: string;
           name: string;
+          owner_id: string | null;
         };
         SetofOptions: {
           from: "*";
@@ -147,6 +156,7 @@ export type Database = {
           created_at: string;
           id: string;
           name: string;
+          owner_id: string | null;
         };
         SetofOptions: {
           from: "*";
@@ -154,6 +164,14 @@ export type Database = {
           isOneToOne: true;
           isSetofReturn: false;
         };
+      };
+      delete_space_for_everyone: {
+        Args: { p_code: string; p_owner_id: string };
+        Returns: boolean;
+      };
+      mark_space_messages_read: {
+        Args: { p_code: string; p_reader_id: string };
+        Returns: number;
       };
       get_space_messages: {
         Args: { p_code: string };
@@ -168,6 +186,7 @@ export type Database = {
           id: string;
           kind: string;
           mime_type: string | null;
+          read_at: string | null;
           space_id: string;
           text: string | null;
         }[];
@@ -202,6 +221,7 @@ export type Database = {
           id: string;
           kind: string;
           mime_type: string | null;
+          read_at: string | null;
           space_id: string;
           text: string | null;
         };

@@ -23,6 +23,19 @@ import { toast } from "sonner";
 import { formatBytes, type Message } from "@/lib/heymama";
 import { AudioMessage } from "./AudioMessage";
 
+const POLL_VOTE_PREFIX = "__poll_vote__:";
+
+function readPoll(text: string) {
+  const lines = text.split("\n");
+  const match = lines[0]?.match(/^📊\s*\*\*POLL:\s*(.*?)\*\*$/);
+  if (!match) return null;
+  const options = lines
+    .slice(1)
+    .map((line) => line.match(/^\d+\.\s*(.+)$/)?.[1])
+    .filter((value): value is string => Boolean(value));
+  return options.length >= 2 ? { question: match[1], options } : null;
+}
+
 const REACTION_EMOJIS = ["❤️", "👍", "😂", "🔥", "😮", "😢"];
 
 function CodeSnippet({ codeText, mine }: { codeText: string; mine?: boolean }) {
@@ -84,6 +97,9 @@ export function MessageBubble({
   onEdit,
   onDelete,
   onOpenThread,
+  allMessages = [],
+  onPollVote,
+  currentUserId,
 }: {
   message: Message;
   mine: boolean;
@@ -96,6 +112,9 @@ export function MessageBubble({
   onEdit: (m: Message) => void;
   onDelete: (m: Message) => void;
   onOpenThread?: (m: Message) => void;
+  allMessages?: Message[];
+  onPollVote?: (poll: Message, option: number) => void;
+  currentUserId?: string;
 }) {
   const [showMenu, setShowMenu] = useState(false);
   const [showReactions, setShowReactions] = useState(false);
@@ -146,9 +165,25 @@ export function MessageBubble({
     hour: "2-digit",
     minute: "2-digit",
   });
+  const poll = message.kind === "text" && message.text ? readPoll(message.text) : null;
+  const pollVotes = allMessages.filter((candidate) =>
+    candidate.text?.startsWith(`${POLL_VOTE_PREFIX}${message.id}:`),
+  );
+  const latestVotes = new Map<string, number>();
+  for (const vote of pollVotes) {
+    const option = Number(vote.text?.slice(`${POLL_VOTE_PREFIX}${message.id}:`.length));
+    if (Number.isInteger(option) && option >= 0 && option < (poll?.options.length ?? 0)) {
+      latestVotes.set(vote.authorId, option);
+    }
+  }
+  const voteCounts =
+    poll?.options.map(
+      (_, index) => [...latestVotes.values()].filter((vote) => vote === index).length,
+    ) ?? [];
+  const myVote = currentUserId ? latestVotes.get(currentUserId) : undefined;
 
   return (
-    <div className={`group flex flex-col ${mine ? "items-end" : "items-start"}`}>
+    <div className={`message-row group flex flex-col ${mine ? "items-end" : "items-start"}`}>
       {!mine && (
         <span className="mb-1 px-1 text-[11px] font-semibold text-muted-foreground">
           {message.authorName || "User"}
@@ -157,13 +192,45 @@ export function MessageBubble({
 
       <div className="relative flex max-w-[85%] items-end gap-1 sm:max-w-[75%]">
         <div
-          className={`relative rounded-2xl p-3 shadow-md transition-all ${
+          className={`message-bubble relative rounded-2xl p-3 shadow-md transition-all ${
             mine
               ? "rounded-br-xs bg-primary text-primary-foreground font-medium"
               : "rounded-bl-xs border border-border bg-card text-card-foreground font-medium"
           }`}
         >
-          {message.kind === "text" && message.text && (
+          {poll && (
+            <div className="min-w-56 space-y-2">
+              <p className="text-sm font-semibold">{poll.question}</p>
+              {poll.options.map((option, index) => {
+                const count = voteCounts[index] ?? 0;
+                const total = [...latestVotes.values()].length;
+                const percent = total ? Math.round((count / total) * 100) : 0;
+                return (
+                  <button
+                    key={`${index}-${option}`}
+                    type="button"
+                    onClick={() => onPollVote?.(message, index)}
+                    aria-pressed={myVote === index}
+                    className="relative flex min-h-10 w-full items-center justify-between overflow-hidden rounded-lg border border-border/70 px-3 text-left text-xs transition-colors hover:border-primary"
+                  >
+                    <span
+                      className="absolute inset-y-0 left-0 bg-primary/15"
+                      style={{ width: `${percent}%` }}
+                    />
+                    <span className="relative">
+                      {myVote === index ? "✓ " : ""}
+                      {option}
+                    </span>
+                    <span className="relative tabular-nums">
+                      {count} · {percent}%
+                    </span>
+                  </button>
+                );
+              })}
+              <p className="text-[10px] opacity-70">{[...latestVotes.values()].length} votes</p>
+            </div>
+          )}
+          {!poll && message.kind === "text" && message.text && (
             <div className="whitespace-pre-wrap break-words text-xs leading-relaxed sm:text-sm font-medium">
               {message.text.includes("```")
                 ? message.text.split(/(```[\s\S]*?```)/g).map((chunk, i) => {
@@ -308,10 +375,15 @@ export function MessageBubble({
             <span>{timeStr}</span>
             {isStarred && <Star className="size-3 text-amber-400 fill-amber-400" />}
             {mine && (
-              <span title={message.isRead ? "Read" : "Delivered"}>
-                <CheckCheck
-                  className={`size-3 ${message.isRead ? "text-sky-400 fill-sky-400/20" : "opacity-90"}`}
-                />
+              <span
+                title={message.isRead ? "Seen" : "Sent"}
+                aria-label={message.isRead ? "Seen" : "Sent"}
+              >
+                {message.isRead ? (
+                  <CheckCheck className="size-3 fill-sky-400/20 text-sky-400" />
+                ) : (
+                  <Check className="size-3 opacity-90" />
+                )}
               </span>
             )}
           </div>

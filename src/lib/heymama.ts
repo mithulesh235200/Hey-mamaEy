@@ -17,6 +17,7 @@ export type Message = {
   forwarded?: boolean;
   editedAt?: number;
   isRead?: boolean;
+  readAt?: number;
   latitude?: number;
   longitude?: number;
   locationName?: string;
@@ -29,6 +30,7 @@ export type Space = {
   name: string;
   code: string;
   createdAt: number;
+  ownerId?: string | null;
 };
 
 export type State = {
@@ -124,7 +126,13 @@ function loadPrefs() {
 
 /* ---------- mapping ---------- */
 
-type SpaceRow = { id: string; name: string; code: string; created_at: string };
+type SpaceRow = {
+  id: string;
+  name: string;
+  code: string;
+  created_at: string;
+  owner_id?: string | null;
+};
 type MessageRow = {
   id: string;
   space_id: string;
@@ -137,6 +145,7 @@ type MessageRow = {
   file_size: number | null;
   mime_type: string | null;
   forwarded: boolean;
+  read_at?: string | null;
   created_at: string;
 };
 
@@ -145,6 +154,7 @@ const toSpace = (r: SpaceRow): Space => ({
   name: r.name,
   code: r.code,
   createdAt: new Date(r.created_at).getTime(),
+  ...(r.owner_id !== undefined && { ownerId: r.owner_id }),
 });
 
 const toMessage = (r: MessageRow): Message => ({
@@ -159,6 +169,7 @@ const toMessage = (r: MessageRow): Message => ({
   ...(r.file_size !== null && { fileSize: Number(r.file_size) }),
   ...(r.mime_type !== null && { mimeType: r.mime_type }),
   forwarded: r.forwarded,
+  ...(r.read_at != null && { isRead: true, readAt: new Date(r.read_at).getTime() }),
   createdAt: new Date(r.created_at).getTime(),
 });
 
@@ -184,18 +195,6 @@ async function fetchMessages(code: string): Promise<Message[]> {
   try {
     const { data, error } = await supabase.rpc("get_space_messages", {
       p_code: code,
-    });
-    return error ? [] : ((data ?? []) as MessageRow[]).map(toMessage);
-  } catch {
-    return [];
-  }
-}
-
-async function fetchMessagesSince(code: string, after: number): Promise<Message[]> {
-  try {
-    const { data, error } = await supabase.rpc("get_space_messages_since", {
-      p_code: code,
-      p_after: new Date(Math.max(0, after - 1)).toISOString(),
     });
     return error ? [] : ((data ?? []) as MessageRow[]).map(toMessage);
   } catch {
@@ -238,17 +237,13 @@ async function loadSpaces() {
 }
 
 async function refreshActiveSpace() {
-  if (typeof document !== "undefined" && document.hidden) return;
   const active = state.spaces.find((s) => s.id === state.activeSpaceId);
   if (!active) return;
   const currentRetained = filterRetained(state.messages);
-  const activeMessages = currentRetained.filter((m) => m.spaceId === active.id);
-  const newest = activeMessages.reduce((latest, message) => Math.max(latest, message.createdAt), 0);
-  const fresh = await fetchMessagesSince(active.code, newest);
-  const known = new Set(activeMessages.map((m) => m.id));
-  const added = filterRetained(fresh).filter((m) => !known.has(m.id));
-
-  set({ messages: [...currentRetained, ...added] });
+  const fresh = filterRetained(await fetchMessages(active.code));
+  set({
+    messages: [...currentRetained.filter((message) => message.spaceId !== active.id), ...fresh],
+  });
 }
 
 export function hydrate() {
@@ -304,6 +299,7 @@ function rememberCode(code: string) {
 export async function createSpace(name: string): Promise<Space | null> {
   const { data, error } = await supabase.rpc("create_space", {
     p_name: name.trim() || "New Space",
+    p_owner_id: state.userId,
   });
   const row = (Array.isArray(data) ? data[0] : data) as SpaceRow | null;
   if (error) throw new Error(error.message);
@@ -355,6 +351,18 @@ export function leaveSpace(spaceId: string): boolean {
     activeSpaceId: state.activeSpaceId === spaceId ? null : state.activeSpaceId,
   });
   return Boolean(space);
+}
+
+export async function deleteSpaceForEveryone(spaceId: string): Promise<boolean> {
+  const space = state.spaces.find((item) => item.id === spaceId);
+  if (!space || !state.userId || space.ownerId !== state.userId) return false;
+
+  const { data, error } = await supabase.rpc("delete_space_for_everyone", {
+    p_code: space.code,
+    p_owner_id: state.userId,
+  });
+  if (error || data !== true) return false;
+  return leaveSpace(spaceId);
 }
 
 export function setActiveSpace(spaceId: string | null) {
@@ -547,6 +555,14 @@ export function markSpaceAsRead(spaceId: string) {
       [spaceId]: Date.now(),
     },
   });
+}
+
+export async function markSpaceMessagesRead(spaceCode: string, readerId: string): Promise<boolean> {
+  const { error } = await supabase.rpc("mark_space_messages_read", {
+    p_code: spaceCode,
+    p_reader_id: readerId,
+  });
+  return !error;
 }
 
 export function getUnreadCount(

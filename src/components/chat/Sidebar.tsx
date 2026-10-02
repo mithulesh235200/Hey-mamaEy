@@ -1,5 +1,17 @@
 import { useEffect, useState } from "react";
-import { Copy, Hash, LogOut, Palette, Plus, RefreshCw, Smile, Users, Check } from "lucide-react";
+import {
+  Copy,
+  Hash,
+  LogOut,
+  Palette,
+  Plus,
+  RefreshCw,
+  Smile,
+  Users,
+  Check,
+  Settings,
+  Sliders,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   createSpace,
@@ -16,7 +28,7 @@ import {
   type Space,
 } from "@/lib/heymama";
 
-type Theme = "dark" | "light" | "cyberpunk" | "sunset";
+type Theme = "dark" | "light" | "cyberpunk" | "sunset" | "ocean";
 type Accent = "cyan" | "emerald" | "violet" | "gold" | "rose";
 
 const THEMES: { id: Theme; label: string; icon: string }[] = [
@@ -24,6 +36,7 @@ const THEMES: { id: Theme; label: string; icon: string }[] = [
   { id: "light", label: "Light", icon: "☀️" },
   { id: "cyberpunk", label: "Cyberpunk", icon: "⚡" },
   { id: "sunset", label: "Sunset", icon: "🌅" },
+  { id: "ocean", label: "Ocean", icon: "🌊" },
 ];
 
 const ACCENTS: { id: Accent; label: string; color: string; hsl: string; fg: string }[] = [
@@ -43,6 +56,7 @@ export function Sidebar({
   activeSpaceId,
   messages,
   onNavigate,
+  onOpenSettings,
 }: {
   userId: string;
   displayName: string;
@@ -50,6 +64,7 @@ export function Sidebar({
   activeSpaceId: string | null;
   messages: Message[];
   onNavigate?: () => void;
+  onOpenSettings?: () => void;
 }) {
   const chatState = useChatState();
   const [joinCode, setJoinCode] = useState("");
@@ -89,6 +104,17 @@ export function Sidebar({
       }
     }
   }, [accent]);
+
+  useEffect(() => {
+    const syncAppearance = () => {
+      const savedTheme = localStorage.getItem("heymamaey.theme") as Theme | null;
+      const savedAccent = localStorage.getItem("heymamaey.accent") as Accent | null;
+      if (savedTheme) setTheme(savedTheme);
+      if (savedAccent) setAccent(savedAccent);
+    };
+    window.addEventListener("heymamaey:preferences-updated", syncAppearance);
+    return () => window.removeEventListener("heymamaey:preferences-updated", syncAppearance);
+  }, []);
 
   const selectStatus = (st: string) => {
     setUserStatus(st);
@@ -171,6 +197,15 @@ export function Sidebar({
               <p className="text-[10px] text-muted-foreground">Codes only. No phone, no email.</p>
             </div>
           </div>
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            aria-label="Open settings"
+            title="Settings"
+            className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-card text-muted-foreground transition-colors hover:bg-secondary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            <Settings className="size-4" />
+          </button>
         </div>
 
         {/* Theme & Accent Customizer */}
@@ -199,7 +234,7 @@ export function Sidebar({
             </div>
           </div>
 
-          <div className="grid grid-cols-4 gap-1 rounded-xl bg-card p-1 border border-border">
+          <div className="grid grid-cols-5 gap-1 rounded-xl bg-card p-1 border border-border">
             {THEMES.map((t) => (
               <button
                 key={t.id}
