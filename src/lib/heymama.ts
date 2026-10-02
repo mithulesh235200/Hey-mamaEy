@@ -214,6 +214,11 @@ async function loadSpaces() {
     set({ spaces: [], messages: [], ready: true });
     return;
   }
+
+  // Show the home screen immediately. Saved Spaces can take time to resolve
+  // over the network, and that delay must not block the whole application.
+  set({ ready: true });
+
   try {
     const results = await Promise.all(prefs.codes.map(fetchSpace));
     const spaces = results.filter((s): s is Space => s !== null);

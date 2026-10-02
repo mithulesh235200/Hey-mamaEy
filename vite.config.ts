@@ -4,26 +4,8 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import { nitro } from "nitro/vite";
 
-export default defineConfig(({ isSsrBuild }) => ({
+export default defineConfig(() => ({
   envPrefix: ["VITE_", "NEXT_PUBLIC_"],
-  build: isSsrBuild
-    ? {}
-    : {
-        rolldownOptions: {
-          output: {
-            codeSplitting: {
-              groups: [
-                {
-                  name: "vendor",
-                  test: /node_modules[\\/]/,
-                  minSize: 30_000,
-                  maxSize: 220_000,
-                },
-              ],
-            },
-          },
-        },
-      },
   resolve: {
     tsconfigPaths: true,
   },
