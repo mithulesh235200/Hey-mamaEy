@@ -145,6 +145,7 @@ export function InAppCall({
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const iceCandidatesQueueRef = useRef<RTCIceCandidateInit[]>([]);
+  const earlyIceCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const callIdRef = useRef<string | null>(null);
   const peerUserIdRef = useRef<string | null>(null);
   const pendingOfferRef = useRef<CallSignal | null>(null);
@@ -184,8 +185,7 @@ export function InAppCall({
   const send = async (event: string, payload: CallSignal) => {
     if (!channelRef.current || !channelSubscribedRef.current) return false;
     try {
-      await channelRef.current.send({ type: "broadcast", event, payload });
-      return true;
+      return (await channelRef.current.send({ type: "broadcast", event, payload })) === "ok";
     } catch {
       return false;
     }
@@ -206,6 +206,7 @@ export function InAppCall({
     }
     remoteStreamRef.current = null;
     iceCandidatesQueueRef.current = [];
+    earlyIceCandidatesRef.current.clear();
 
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
@@ -352,6 +353,11 @@ export function InAppCall({
 
     peerRef.current = peer;
     localStreamRef.current = stream;
+    const earlyCandidates = earlyIceCandidatesRef.current.get(callId);
+    if (earlyCandidates) {
+      iceCandidatesQueueRef.current.push(...earlyCandidates);
+      earlyIceCandidatesRef.current.delete(callId);
+    }
     if (localVideoRef.current) {
       localVideoRef.current.srcObject = stream;
       localVideoRef.current.play().catch(() => {});
@@ -392,7 +398,11 @@ export function InAppCall({
       await peer.setLocalDescription(offer);
 
       const payload: CallSignal = { callId, from: userId, mode: callMode, offer };
-      await send("call-offer", payload);
+      if (!(await send("call-offer", payload))) {
+        throw new Error(
+          "Could not send the call invitation. Check your internet connection and try again.",
+        );
+      }
 
       // Re-transmit offer every 1.5s to ensure reception by long-range devices
       let attempts = 0;
@@ -438,7 +448,11 @@ export function InAppCall({
         to: offerSignal.from,
         answer,
       };
-      await send("call-answer", answerPayload);
+      if (!(await send("call-answer", answerPayload))) {
+        throw new Error(
+          "Could not send the call answer. Check your internet connection and try again.",
+        );
+      }
 
       // Re-send answer twice to guarantee delivery
       setTimeout(() => {
@@ -509,7 +523,24 @@ export function InAppCall({
       .on("broadcast", { event: "call-ice" }, async ({ payload }: { payload: CallSignal }) => {
         if (payload.from === userId) return;
         if (payload.to && payload.to !== userId) return;
-        if (payload.callId !== callIdRef.current || !payload.candidate) return;
+        if (!payload.candidate) return;
+
+        // ICE can arrive before the matching offer over Realtime. Keep it until
+        // the recipient accepts and creates the peer connection.
+        if (!callIdRef.current && !active) {
+          const candidates = earlyIceCandidatesRef.current.get(payload.callId) ?? [];
+          if (
+            !earlyIceCandidatesRef.current.has(payload.callId) &&
+            earlyIceCandidatesRef.current.size >= 5
+          ) {
+            const oldestCallId = earlyIceCandidatesRef.current.keys().next().value;
+            if (oldestCallId) earlyIceCandidatesRef.current.delete(oldestCallId);
+          }
+          if (candidates.length < 64) candidates.push(payload.candidate);
+          earlyIceCandidatesRef.current.set(payload.callId, candidates);
+          return;
+        }
+        if (payload.callId !== callIdRef.current) return;
 
         const peer = peerRef.current;
         if (peer && peer.remoteDescription) {
