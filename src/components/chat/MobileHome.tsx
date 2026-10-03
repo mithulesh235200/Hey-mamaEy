@@ -103,17 +103,21 @@ export function MobileHome({
 
   const handleJoin = async () => {
     if ((!displayName || displayName === "You") && !saveName()) return;
-    if (joinCode.replace(/\D/g, "").length < 6) {
-      toast.error("Enter the Space code", {
-        description: "Use the 6 or 8 digit code you received.",
+    const cleanCode = joinCode.trim();
+    const digits = cleanCode.replace(/\D/g, "");
+    if (!cleanCode || (digits.length !== 6 && digits.length !== 8)) {
+      toast.error("Invalid Space Code", {
+        description: "Space code must be a valid 6 or 8 digit number.",
       });
       return;
     }
     setBusy("join");
     try {
-      const space = await joinSpace(joinCode);
+      const space = await joinSpace(cleanCode);
       if (!space) {
-        toast.error("Space not found", { description: "Check the code and try again." });
+        toast.error("Invalid Space Code", {
+          description: "No Space exists with that code. Please check the code and try again.",
+        });
         return;
       }
       markSpaceAsRead(space.id);

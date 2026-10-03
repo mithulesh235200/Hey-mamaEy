@@ -233,7 +233,7 @@ async function loadSpaces() {
       activeSpaceId:
         state.activeSpaceId && ids.includes(state.activeSpaceId)
           ? state.activeSpaceId
-          : (spaces[0]?.id ?? null),
+          : null,
     });
   } catch {
     // Keep the application usable if a network request is interrupted.

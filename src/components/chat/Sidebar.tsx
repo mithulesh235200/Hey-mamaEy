@@ -160,10 +160,15 @@ export function Sidebar({
       toast.error("Add your name first", { description: "Your name is shown in the Space." });
       return;
     }
-    const space = await joinSpace(joinCode);
+    const cleanCode = joinCode.trim();
+    if (!cleanCode) {
+      toast.error("Enter a Space Code", { description: "Type a Space Code to join." });
+      return;
+    }
+    const space = await joinSpace(cleanCode);
     if (!space) {
-      toast.error("No Space found with that number", {
-        description: "Ask your friend to share their exact 8-digit Space Code.",
+      toast.error("Invalid Space Code", {
+        description: "No Space exists with that code. Please check the code and try again.",
       });
       return;
     }
