@@ -168,6 +168,9 @@ export function InAppCall({
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState("");
 
+  const activeRef = useRef(false);
+  const incomingRef = useRef<CallSignal | null>(null);
+
   const clearTimers = () => {
     if (offerRetryTimerRef.current) {
       clearInterval(offerRetryTimerRef.current);
@@ -213,6 +216,8 @@ export function InAppCall({
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
     if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
 
+    activeRef.current = false;
+    incomingRef.current = null;
     setConnected(false);
     setActive(false);
     setSharingScreen(false);
@@ -366,6 +371,7 @@ export function InAppCall({
     callIdRef.current = callId;
     if (remoteUserId) peerUserIdRef.current = remoteUserId;
     setMode(callMode);
+    activeRef.current = true;
     setActive(true);
     return peer;
   };
@@ -380,7 +386,7 @@ export function InAppCall({
   };
 
   const startCall = async (callMode: CallMode) => {
-    if (active) return;
+    if (activeRef.current) return;
     setError("");
 
     const isSubscribed = await waitForChannelSubscription();
@@ -468,6 +474,7 @@ export function InAppCall({
       }, 2500);
 
       pendingOfferRef.current = null;
+      incomingRef.current = null;
       setIncoming(null);
     } catch (err) {
       closePeer();
@@ -476,7 +483,7 @@ export function InAppCall({
   };
 
   const endCall = async () => {
-    const callId = callIdRef.current ?? incoming?.callId;
+    const callId = callIdRef.current ?? incomingRef.current?.callId ?? incoming?.callId;
     if (callId) {
       await send("call-end", { callId, from: userId });
     }
@@ -496,7 +503,7 @@ export function InAppCall({
         if (payload.from === userId) return;
 
         // If we are already in this call as the answerer, reply with our current answer
-        if (active && payload.callId === callIdRef.current && peerRef.current?.localDescription) {
+        if (activeRef.current && payload.callId === callIdRef.current && peerRef.current?.localDescription) {
           await send("call-answer", {
             callId: payload.callId,
             from: userId,
@@ -506,8 +513,9 @@ export function InAppCall({
           return;
         }
 
-        if (!active) {
+        if (!activeRef.current && !incomingRef.current) {
           pendingOfferRef.current = payload;
+          incomingRef.current = payload;
           setIncoming(payload);
         }
       })
@@ -528,7 +536,7 @@ export function InAppCall({
 
         // ICE can arrive before the matching offer over Realtime. Keep it until
         // the recipient accepts and creates the peer connection.
-        if (!callIdRef.current && !active) {
+        if (!callIdRef.current && !activeRef.current) {
           const candidates = earlyIceCandidatesRef.current.get(payload.callId) ?? [];
           if (
             !earlyIceCandidatesRef.current.has(payload.callId) &&
@@ -556,7 +564,7 @@ export function InAppCall({
       })
       .on("broadcast", { event: "call-end" }, ({ payload }: { payload: CallSignal }) => {
         if (payload.from === userId) return;
-        if (payload.callId === callIdRef.current || payload.callId === incoming?.callId) {
+        if (payload.callId === callIdRef.current || payload.callId === incomingRef.current?.callId) {
           closePeer();
           onClose();
         }

@@ -2455,16 +2455,14 @@ export function ChatPanel({
         </div>
       )}
 
-      {callMode && (
-        <Suspense fallback={null}>
-          <InAppCall
-            spaceCode={space.code}
-            userId={userId}
-            requestedMode={callMode}
-            onClose={() => setCallMode(null)}
-          />
-        </Suspense>
-      )}
+      <Suspense fallback={null}>
+        <InAppCall
+          spaceCode={space.code}
+          userId={userId}
+          requestedMode={callMode}
+          onClose={() => setCallMode(null)}
+        />
+      </Suspense>
     </section>
   );
 }
