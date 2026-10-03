@@ -185,7 +185,8 @@ async function fetchSpace(code: string) {
     });
     if (error) return null;
     const row = (Array.isArray(data) ? data[0] : data) as SpaceRow | null;
-    return row ? toSpace(row) : null;
+    if (!row || !row.id || !row.code) return null;
+    return toSpace(row);
   } catch {
     return null;
   }
@@ -221,7 +222,9 @@ async function loadSpaces() {
 
   try {
     const results = await Promise.all(prefs.codes.map(fetchSpace));
-    const spaces = results.filter((s): s is Space => s !== null);
+    const spaces = results.filter(
+      (s): s is Space => s !== null && Boolean(s.id) && Boolean(s.code),
+    );
     const ids = spaces.map((s) => s.id);
     const messageLists = await Promise.all(spaces.map((s) => fetchMessages(s.code)));
     const validMessages = filterRetained(messageLists.flat());
@@ -295,6 +298,7 @@ export function setDisplayName(name: string) {
 }
 
 function rememberCode(code: string) {
+  if (!code) return;
   if (!prefs.codes.includes(code)) {
     prefs.codes = [code, ...prefs.codes];
     savePrefs();
@@ -330,14 +334,14 @@ export async function joinSpace(rawCode: string): Promise<Space | null> {
   }
 
   const space = await fetchSpace(formatted);
-  if (!space) return null;
+  if (!space || !space.id || !space.code) return null;
   rememberCode(space.code);
 
   const history = await fetchMessages(space.code);
   const existingIds = new Set(state.messages.map((m) => m.id));
 
   set({
-    spaces: [space, ...state.spaces],
+    spaces: [space, ...state.spaces.filter((s) => s.id !== space.id)],
     messages: [...state.messages, ...history.filter((m) => !existingIds.has(m.id))],
     activeSpaceId: space.id,
   });

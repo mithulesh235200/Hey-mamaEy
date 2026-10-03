@@ -166,7 +166,7 @@ export function Sidebar({
       return;
     }
     const space = await joinSpace(cleanCode);
-    if (!space) {
+    if (!space || !space.id || !space.code) {
       toast.error("Invalid Space Code", {
         description: "No Space exists with that code. Please check the code and try again.",
       });
