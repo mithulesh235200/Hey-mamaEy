@@ -97,11 +97,24 @@ export function useChatState(): State {
   return useSyncExternalStore(store.subscribe, store.get, () => initialState);
 }
 
+import {
+  generateSecretRecoveryPhrase,
+  deriveUserIdFromPhrase,
+  createFullBackupPayload,
+  parseBackupInput,
+  validateSecretRecoveryPhrase,
+} from "./recovery";
+
 /* ---------- persistence of local prefs ---------- */
 
-type Prefs = { userId: string; displayName: string; codes: string[] };
+type Prefs = {
+  userId: string;
+  displayName: string;
+  codes: string[];
+  recoveryPhrase?: string;
+};
 
-let prefs: Prefs = { userId: "", displayName: "You", codes: [] };
+let prefs: Prefs = { userId: "", displayName: "You", codes: [], recoveryPhrase: "" };
 
 function savePrefs() {
   if (typeof window === "undefined") return;
@@ -120,7 +133,16 @@ function loadPrefs() {
   } catch {
     /* ignore */
   }
-  if (!prefs.userId) prefs.userId = generateUserId();
+
+  // Generate 12-word secret recovery phrase if not present
+  if (!prefs.recoveryPhrase) {
+    prefs.recoveryPhrase = generateSecretRecoveryPhrase();
+  }
+
+  // Derive deterministic userId from recovery phrase if missing
+  if (!prefs.userId) {
+    prefs.userId = deriveUserIdFromPhrase(prefs.recoveryPhrase);
+  }
   savePrefs();
 }
 
@@ -581,4 +603,54 @@ export function getUnreadCount(
   return messages.filter(
     (m) => m.spaceId === spaceId && m.authorId !== userId && m.createdAt > lastRead,
   ).length;
+}
+
+/* ---------- Secret Recovery Phrase & Identity Restore ---------- */
+
+export function getRecoveryPhrase(): string {
+  loadPrefs();
+  return prefs.recoveryPhrase || "";
+}
+
+export function getBackupPayload(): string {
+  loadPrefs();
+  const phrase = prefs.recoveryPhrase || "";
+  return createFullBackupPayload(phrase, prefs.displayName, prefs.codes);
+}
+
+export function restoreIdentityFromPhrase(input: string): {
+  success: boolean;
+  message: string;
+  userId?: string;
+} {
+  try {
+    const parsed = parseBackupInput(input);
+    const validation = validateSecretRecoveryPhrase(parsed.phrase);
+    if (!validation.valid) {
+      return { success: false, message: validation.error || "Invalid 12-word phrase" };
+    }
+
+    prefs.recoveryPhrase = validation.words.join(" ");
+    prefs.userId = parsed.userId;
+    if (parsed.displayName) {
+      prefs.displayName = parsed.displayName;
+    }
+    if (parsed.codes && parsed.codes.length > 0) {
+      const mergedCodes = [...new Set([...prefs.codes, ...parsed.codes])];
+      prefs.codes = mergedCodes;
+    }
+
+    savePrefs();
+    set({ userId: prefs.userId, displayName: prefs.displayName });
+    void loadSpaces();
+
+    return {
+      success: true,
+      message: `Identity restored successfully! (${prefs.userId})`,
+      userId: prefs.userId,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Restore failed";
+    return { success: false, message: msg };
+  }
 }

@@ -18,9 +18,19 @@ import {
   Zap,
   Flame,
   Waves,
+  Key,
+  Eye,
+  EyeOff,
+  Download,
 } from "lucide-react";
 import { toast } from "sonner";
-import { regenerateId, setDisplayName } from "@/lib/heymama";
+import {
+  regenerateId,
+  setDisplayName,
+  getRecoveryPhrase,
+  getBackupPayload,
+  restoreIdentityFromPhrase,
+} from "@/lib/heymama";
 
 export type Theme = "dark" | "light" | "cyberpunk" | "sunset" | "ocean";
 export type Accent = "cyan" | "emerald" | "violet" | "gold" | "rose";
@@ -101,6 +111,57 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
     "appearance",
   );
   const [editingName, setEditingName] = useState(displayName);
+
+  // 12-Word Secret Recovery Phrase State
+  const [showSecretPhrase, setShowSecretPhrase] = useState(false);
+  const [restoreInput, setRestoreInput] = useState("");
+  const [showRestoreForm, setShowRestoreForm] = useState(false);
+
+  const recoveryPhrase = getRecoveryPhrase();
+  const phraseWords = recoveryPhrase ? recoveryPhrase.split(" ") : [];
+
+  const handleCopyPhrase = async () => {
+    try {
+      await navigator.clipboard.writeText(recoveryPhrase);
+      toast.success("12-Word Recovery Phrase Copied!", {
+        description: "Keep this phrase safe and private.",
+      });
+    } catch {
+      toast.error("Copy failed");
+    }
+  };
+
+  const handleCopyBackup = async () => {
+    try {
+      const payload = getBackupPayload();
+      await navigator.clipboard.writeText(payload);
+      toast.success("Full Backup Data Payload Copied!", {
+        description: "Contains phrase, name, and joined space codes.",
+      });
+    } catch {
+      toast.error("Copy failed");
+    }
+  };
+
+  const handleRestoreAccount = () => {
+    if (!restoreInput.trim()) {
+      toast.error("Please enter a 12-word recovery phrase or backup payload");
+      return;
+    }
+    const result = restoreIdentityFromPhrase(restoreInput.trim());
+    if (result.success) {
+      toast.success("Identity & Data Restored!", {
+        description: result.message,
+      });
+      setRestoreInput("");
+      setShowRestoreForm(false);
+      onClose();
+    } else {
+      toast.error("Restore Failed", {
+        description: result.message,
+      });
+    }
+  };
 
   // Theme & Accent State
   const [theme, setTheme] = useState<Theme>(() => {
@@ -645,7 +706,7 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
 
             {/* TAB 4: IDENTITY & ACCOUNT */}
             {activeTab === "account" && (
-              <div className="space-y-5">
+              <div className="space-y-6">
                 <div>
                   <h3 className="text-sm font-bold text-foreground mb-1">
                     Your Anonymous Display Name
@@ -692,12 +753,133 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
                   </div>
                 </div>
 
+                {/* 12-WORD SECRET RECOVERY PHRASE SECTION */}
+                <div className="border-t border-border pt-5">
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <h3 className="text-sm font-bold text-foreground flex items-center gap-1.5">
+                        <Key className="size-4 text-primary" /> 12-Word Secret Recovery Phrase
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Back up your local identity. Used to recover access if cache is cleared or on new devices.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setShowSecretPhrase(!showSecretPhrase)}
+                      className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted transition-colors shrink-0"
+                    >
+                      {showSecretPhrase ? (
+                        <>
+                          <EyeOff className="size-3.5" /> Hide
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="size-3.5" /> Show
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* 12-Word Seed Grid Chips */}
+                  <div className="relative rounded-2xl border border-border bg-muted/30 p-3.5 mt-3">
+                    {!showSecretPhrase && (
+                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-2xl bg-background/80 backdrop-blur-md p-4 text-center">
+                        <Key className="size-6 text-primary mb-1 opacity-80" />
+                        <span className="text-xs font-semibold text-foreground">
+                          Secret Phrase Hidden
+                        </span>
+                        <p className="text-[11px] text-muted-foreground mt-0.5 mb-2 max-w-[260px]">
+                          Never share your recovery phrase with anyone.
+                        </p>
+                        <button
+                          onClick={() => setShowSecretPhrase(true)}
+                          className="rounded-xl bg-primary/10 border border-primary/20 px-3.5 py-1.5 text-xs font-bold text-primary hover:bg-primary/20 transition-colors"
+                        >
+                          Reveal 12 Words
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                      {phraseWords.map((word, idx) => (
+                        <div
+                          key={idx}
+                          className="flex items-center gap-2 rounded-xl border border-border/60 bg-background/80 px-2.5 py-1.5"
+                        >
+                          <span className="text-[10px] font-bold text-muted-foreground select-none w-4 text-right">
+                            {idx + 1}.
+                          </span>
+                          <span className="font-mono text-xs font-semibold text-foreground truncate">
+                            {word}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-3.5 flex flex-wrap gap-2 pt-2 border-t border-border/40">
+                      <button
+                        onClick={handleCopyPhrase}
+                        className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-primary/10 border border-primary/30 px-3 py-2 text-xs font-bold text-primary hover:bg-primary/20 transition-colors"
+                      >
+                        <Copy className="size-3.5" /> Copy 12 Words
+                      </button>
+                      <button
+                        onClick={handleCopyBackup}
+                        className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-secondary border border-border px-3 py-2 text-xs font-semibold text-secondary-foreground hover:bg-muted transition-colors"
+                      >
+                        <Download className="size-3.5" /> Copy Full Backup
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* RESTORE ACCOUNT SECTION */}
+                <div className="border-t border-border pt-5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-bold text-foreground">
+                        Restore Identity & Data
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Restore identity and spaces on a new device or cleared browser.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setShowRestoreForm(!showRestoreForm)}
+                      className="rounded-xl bg-secondary border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+                    >
+                      {showRestoreForm ? "Cancel" : "Restore Account"}
+                    </button>
+                  </div>
+
+                  {showRestoreForm && (
+                    <div className="mt-3.5 space-y-3 rounded-2xl border border-primary/30 bg-primary/5 p-4">
+                      <label className="block text-xs font-medium text-foreground">
+                        Enter 12-Word Recovery Phrase or Backup Payload:
+                      </label>
+                      <textarea
+                        value={restoreInput}
+                        onChange={(e) => setRestoreInput(e.target.value)}
+                        placeholder="e.g. apple banana cherry dog eagle fox grape house island jungle kite lemon"
+                        rows={3}
+                        className="w-full rounded-xl border border-border bg-background p-3 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                      <button
+                        onClick={handleRestoreAccount}
+                        className="w-full rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground hover:opacity-90 transition-opacity shadow-sm"
+                      >
+                        Restore Identity Now
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 <div className="border-t border-border pt-4">
                   <button
                     onClick={handleRegenerateId}
                     className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-xs font-semibold text-destructive hover:bg-destructive/20 transition-colors w-full justify-center"
                   >
-                    <RefreshCw className="size-4" /> Regenerate Identity Code
+                    <RefreshCw className="size-4" /> Regenerate Random Identity
                   </button>
                 </div>
               </div>
