@@ -390,14 +390,14 @@ export function MessageBubble({
         </div>
 
         {/* Message Actions */}
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 relative">
+        <div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex items-center gap-0.5 relative shrink-0">
           {message.text && (
             <button
               type="button"
               onClick={speakText}
               title={speaking ? "Stop reading" : "Read aloud (Text-to-speech)"}
               className={
-                "rounded-full bg-card p-1 text-muted-foreground hover:text-primary transition-colors " +
+                "rounded-full bg-card p-1.5 text-muted-foreground hover:text-primary transition-colors " +
                 (speaking ? "text-primary animate-pulse" : "")
               }
             >
@@ -410,7 +410,7 @@ export function MessageBubble({
               type="button"
               onClick={() => onOpenThread(message)}
               title="Reply in Thread"
-              className="rounded-full bg-card p-1 text-muted-foreground hover:text-primary transition-colors"
+              className="rounded-full bg-card p-1.5 text-muted-foreground hover:text-primary transition-colors"
             >
               <MessageSquare className="size-3.5 text-amber-400" />
             </button>
@@ -420,7 +420,7 @@ export function MessageBubble({
             type="button"
             onClick={() => onReply(message)}
             title="Reply quote"
-            className="rounded-full bg-card p-1 text-muted-foreground hover:text-primary transition-colors"
+            className="rounded-full bg-card p-1.5 text-muted-foreground hover:text-primary transition-colors"
           >
             <Reply className="size-3.5" />
           </button>
@@ -429,7 +429,7 @@ export function MessageBubble({
             type="button"
             onClick={() => setShowReactions((v) => !v)}
             title="React"
-            className="rounded-full bg-card p-1 text-muted-foreground hover:text-primary transition-colors"
+            className="rounded-full bg-card p-1.5 text-muted-foreground hover:text-primary transition-colors"
           >
             <Smile className="size-3.5" />
           </button>
@@ -437,7 +437,8 @@ export function MessageBubble({
           <button
             type="button"
             onClick={() => setShowMenu((v) => !v)}
-            className="rounded-full bg-card p-1 text-muted-foreground hover:text-foreground"
+            title="More options (Copy, Star, Pin, Delete)"
+            className="rounded-full bg-card p-1.5 text-muted-foreground hover:text-foreground shadow-xs border border-border/50"
           >
             <MoreVertical className="size-3.5" />
           </button>
@@ -458,14 +459,40 @@ export function MessageBubble({
           )}
 
           {showMenu && (
-            <div className="absolute bottom-8 right-0 z-40 w-36 rounded-xl border border-border bg-card p-1 shadow-xl animate-in zoom-in-95 duration-150">
+            <div
+              className={`absolute bottom-8 z-40 w-44 rounded-2xl border border-border bg-card/95 backdrop-blur-md p-1.5 shadow-2xl animate-in zoom-in-95 duration-150 ${
+                mine ? "right-0" : "left-0 sm:left-auto sm:right-0"
+              }`}
+            >
               {message.text && (
                 <button
                   type="button"
                   onClick={() => void copyText()}
-                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-foreground hover:bg-secondary transition-colors"
                 >
-                  <Copy className="size-3.5" /> Copy
+                  <Copy className="size-4 text-primary" /> Copy text
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  onReply(message);
+                  setShowMenu(false);
+                }}
+                className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-foreground hover:bg-secondary transition-colors"
+              >
+                <Reply className="size-4 text-sky-400" /> Reply quote
+              </button>
+              {onOpenThread && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenThread(message);
+                    setShowMenu(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-foreground hover:bg-secondary transition-colors"
+                >
+                  <MessageSquare className="size-4 text-amber-400" /> Reply in thread
                 </button>
               )}
               <button
@@ -474,9 +501,9 @@ export function MessageBubble({
                   onStar(message);
                   setShowMenu(false);
                 }}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-amber-400"
+                className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-foreground hover:bg-secondary hover:text-amber-400 transition-colors"
               >
-                <Star className="size-3.5" /> {isStarred ? "Unstar" : "Star"}
+                <Star className="size-4 text-amber-400" /> {isStarred ? "Unstar message" : "Star message"}
               </button>
               <button
                 type="button"
@@ -484,9 +511,9 @@ export function MessageBubble({
                   onPin(message);
                   setShowMenu(false);
                 }}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+                className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-foreground hover:bg-secondary transition-colors"
               >
-                <Pin className="size-3.5" /> Pin
+                <Pin className="size-4 text-purple-400" /> Pin message
               </button>
               <button
                 type="button"
@@ -494,10 +521,23 @@ export function MessageBubble({
                   onForward(message);
                   setShowMenu(false);
                 }}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+                className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-foreground hover:bg-secondary transition-colors"
               >
-                <Forward className="size-3.5" /> Forward
+                <Forward className="size-4 text-emerald-400" /> Forward
               </button>
+
+              {message.text && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    speakText();
+                    setShowMenu(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-foreground hover:bg-secondary transition-colors"
+                >
+                  <Volume2 className="size-4 text-indigo-400" /> Read aloud
+                </button>
+              )}
 
               {mine && (
                 <>
@@ -508,9 +548,9 @@ export function MessageBubble({
                         onEdit(message);
                         setShowMenu(false);
                       }}
-                      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-foreground hover:bg-secondary transition-colors"
                     >
-                      <Pencil className="size-3.5" /> Edit
+                      <Pencil className="size-4 text-blue-400" /> Edit
                     </button>
                   )}
                   <button
@@ -519,9 +559,9 @@ export function MessageBubble({
                       onDelete(message);
                       setShowMenu(false);
                     }}
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-destructive hover:bg-destructive/10"
+                    className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-destructive hover:bg-destructive/10 transition-colors"
                   >
-                    <Trash2 className="size-3.5" /> Delete
+                    <Trash2 className="size-4" /> Delete
                   </button>
                 </>
               )}
