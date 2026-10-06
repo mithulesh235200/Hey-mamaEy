@@ -232,7 +232,34 @@ function filterRetained(messages: Message[]): Message[] {
   return messages.filter((m) => m.createdAt >= cutoff);
 }
 
+export async function syncUserSpacesFromCloud(userId: string): Promise<string[]> {
+  if (!userId) return [];
+  try {
+    const { data, error } = await (supabase.rpc as any)("get_user_spaces", {
+      p_user_id: userId,
+    });
+    if (error || !data || !Array.isArray(data)) return [];
+    const rows = data as unknown as SpaceRow[];
+    const cloudCodes = rows
+      .map((s) => s.code)
+      .filter((c: string): c is string => Boolean(c));
+
+    if (cloudCodes.length > 0) {
+      const merged = [...new Set([...prefs.codes, ...cloudCodes])];
+      prefs.codes = merged;
+      savePrefs();
+    }
+    return cloudCodes;
+  } catch {
+    return [];
+  }
+}
+
 async function loadSpaces() {
+  if (prefs.userId && prefs.codes.length === 0) {
+    await syncUserSpacesFromCloud(prefs.userId);
+  }
+
   if (prefs.codes.length === 0) {
     set({ spaces: [], messages: [], ready: true });
     return;
@@ -254,7 +281,7 @@ async function loadSpaces() {
       activeSpaceId:
         state.activeSpaceId && ids.includes(state.activeSpaceId)
           ? state.activeSpaceId
-          : null,
+          : spaces[0]?.id || null,
     });
   } catch {
     // Keep the application usable if a network request is interrupted.
@@ -618,11 +645,11 @@ export function getBackupPayload(): string {
   return createFullBackupPayload(key, prefs.displayName, prefs.codes);
 }
 
-export function restoreFromPermanentKey(input: string): {
+export async function restoreFromPermanentKey(input: string): Promise<{
   success: boolean;
   message: string;
   userId?: string;
-} {
+}> {
   try {
     const parsed = parseBackupInput(input);
     const validation = validatePermanentAccessKey(parsed.key);
@@ -642,11 +669,17 @@ export function restoreFromPermanentKey(input: string): {
 
     savePrefs();
     set({ userId: prefs.userId, displayName: prefs.displayName });
-    void loadSpaces();
 
+    // Sync cloud spaces for this userId
+    await syncUserSpacesFromCloud(prefs.userId);
+
+    // Load space data and past messages
+    await loadSpaces();
+
+    const spaceCount = state.spaces.length;
     return {
       success: true,
-      message: `Access granted! Derived Identity: ${prefs.userId}`,
+      message: `Access granted! Restored ${spaceCount} space(s) & past chat history for ${prefs.userId}`,
       userId: prefs.userId,
     };
   } catch (err: unknown) {

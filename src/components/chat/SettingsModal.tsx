@@ -142,23 +142,35 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
     }
   };
 
-  const handleRestoreAccount = () => {
+  const [isRestoring, setIsRestoring] = useState(false);
+
+  const handleRestoreAccount = async () => {
     if (!restoreInput.trim()) {
       toast.error("Please enter a valid permanent access key or backup token");
       return;
     }
-    const result = restoreFromPermanentKey(restoreInput.trim());
-    if (result.success) {
-      toast.success("Access Granted & Data Synced!", {
-        description: result.message,
-      });
-      setRestoreInput("");
-      setShowRestoreForm(false);
-      onClose();
-    } else {
-      toast.error("Access Failed", {
-        description: result.message,
-      });
+    setIsRestoring(true);
+    const toastId = toast.loading("Syncing identity, spaces & chat history...");
+    try {
+      const result = await restoreFromPermanentKey(restoreInput.trim());
+      toast.dismiss(toastId);
+      if (result.success) {
+        toast.success("Access Granted & Data Synced!", {
+          description: result.message,
+        });
+        setRestoreInput("");
+        setShowRestoreForm(false);
+        onClose();
+      } else {
+        toast.error("Access Failed", {
+          description: result.message,
+        });
+      }
+    } catch {
+      toast.dismiss(toastId);
+      toast.error("Restoration failed");
+    } finally {
+      setIsRestoring(false);
     }
   };
 
@@ -860,9 +872,10 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
                       />
                       <button
                         onClick={handleRestoreAccount}
-                        className="w-full rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground hover:opacity-90 transition-opacity shadow-sm"
+                        disabled={isRestoring}
+                        className="w-full rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground hover:opacity-90 transition-opacity shadow-sm disabled:opacity-50"
                       >
-                        Access Account & Load Data
+                        {isRestoring ? "Syncing Spaces & Chats..." : "Access Account & Load Data"}
                       </button>
                     </div>
                   )}
