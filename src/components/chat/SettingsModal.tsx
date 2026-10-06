@@ -27,9 +27,9 @@ import { toast } from "sonner";
 import {
   regenerateId,
   setDisplayName,
-  getRecoveryPhrase,
+  getPermanentKey,
   getBackupPayload,
-  restoreIdentityFromPhrase,
+  restoreFromPermanentKey,
 } from "@/lib/heymama";
 
 export type Theme = "dark" | "light" | "cyberpunk" | "sunset" | "ocean";
@@ -112,19 +112,18 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
   );
   const [editingName, setEditingName] = useState(displayName);
 
-  // 12-Word Secret Recovery Phrase State
-  const [showSecretPhrase, setShowSecretPhrase] = useState(false);
+  // Permanent Secret Access Key State
+  const [showPermanentKey, setShowPermanentKey] = useState(false);
   const [restoreInput, setRestoreInput] = useState("");
   const [showRestoreForm, setShowRestoreForm] = useState(false);
 
-  const recoveryPhrase = getRecoveryPhrase();
-  const phraseWords = recoveryPhrase ? recoveryPhrase.split(" ") : [];
+  const permanentKey = getPermanentKey();
 
-  const handleCopyPhrase = async () => {
+  const handleCopyPermanentKey = async () => {
     try {
-      await navigator.clipboard.writeText(recoveryPhrase);
-      toast.success("12-Word Recovery Phrase Copied!", {
-        description: "Keep this phrase safe and private.",
+      await navigator.clipboard.writeText(permanentKey);
+      toast.success("Permanent Access Key Copied!", {
+        description: "Keep this key safe to access your account anywhere.",
       });
     } catch {
       toast.error("Copy failed");
@@ -136,7 +135,7 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
       const payload = getBackupPayload();
       await navigator.clipboard.writeText(payload);
       toast.success("Full Backup Data Payload Copied!", {
-        description: "Contains phrase, name, and joined space codes.",
+        description: "Contains access key, display name, and joined space codes.",
       });
     } catch {
       toast.error("Copy failed");
@@ -145,19 +144,19 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
 
   const handleRestoreAccount = () => {
     if (!restoreInput.trim()) {
-      toast.error("Please enter a 12-word recovery phrase or backup payload");
+      toast.error("Please enter a valid permanent access key or backup token");
       return;
     }
-    const result = restoreIdentityFromPhrase(restoreInput.trim());
+    const result = restoreFromPermanentKey(restoreInput.trim());
     if (result.success) {
-      toast.success("Identity & Data Restored!", {
+      toast.success("Access Granted & Data Synced!", {
         description: result.message,
       });
       setRestoreInput("");
       setShowRestoreForm(false);
       onClose();
     } else {
-      toast.error("Restore Failed", {
+      toast.error("Access Failed", {
         description: result.message,
       });
     }
@@ -753,122 +752,117 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
                   </div>
                 </div>
 
-                {/* 12-WORD SECRET RECOVERY PHRASE SECTION */}
+                {/* PERMANENT SECRET ACCESS KEY SECTION */}
                 <div className="border-t border-border pt-5">
                   <div className="flex items-center justify-between mb-2">
                     <div>
                       <h3 className="text-sm font-bold text-foreground flex items-center gap-1.5">
-                        <Key className="size-4 text-primary" /> 12-Word Secret Recovery Phrase
+                        <Key className="size-4 text-primary" /> Permanent Secret Access Key
                       </h3>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Back up your local identity. Used to recover access if cache is cleared or on new devices.
+                        Your permanent secret access number. Use this number to access your account & data on any device.
                       </p>
                     </div>
                     <button
-                      onClick={() => setShowSecretPhrase(!showSecretPhrase)}
+                      onClick={() => setShowPermanentKey(!showPermanentKey)}
                       className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted transition-colors shrink-0"
                     >
-                      {showSecretPhrase ? (
+                      {showPermanentKey ? (
                         <>
-                          <EyeOff className="size-3.5" /> Hide
+                          <EyeOff className="size-3.5" /> Hide Key
                         </>
                       ) : (
                         <>
-                          <Eye className="size-3.5" /> Show
+                          <Eye className="size-3.5" /> Reveal Key
                         </>
                       )}
                     </button>
                   </div>
 
-                  {/* 12-Word Seed Grid Chips */}
-                  <div className="relative rounded-2xl border border-border bg-muted/30 p-3.5 mt-3">
-                    {!showSecretPhrase && (
-                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-2xl bg-background/80 backdrop-blur-md p-4 text-center">
+                  {/* Permanent Key Display Card */}
+                  <div className="relative rounded-2xl border border-primary/30 bg-primary/5 p-4 mt-3">
+                    {!showPermanentKey && (
+                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-2xl bg-background/85 backdrop-blur-md p-4 text-center">
                         <Key className="size-6 text-primary mb-1 opacity-80" />
                         <span className="text-xs font-semibold text-foreground">
-                          Secret Phrase Hidden
+                          Permanent Secret Key Hidden
                         </span>
                         <p className="text-[11px] text-muted-foreground mt-0.5 mb-2 max-w-[260px]">
-                          Never share your recovery phrase with anyone.
+                          Never share your secret access key with anyone.
                         </p>
                         <button
-                          onClick={() => setShowSecretPhrase(true)}
-                          className="rounded-xl bg-primary/10 border border-primary/20 px-3.5 py-1.5 text-xs font-bold text-primary hover:bg-primary/20 transition-colors"
+                          onClick={() => setShowPermanentKey(true)}
+                          className="rounded-xl bg-primary px-3.5 py-1.5 text-xs font-bold text-primary-foreground hover:opacity-90 transition-opacity"
                         >
-                          Reveal 12 Words
+                          Reveal Permanent Key
                         </button>
                       </div>
                     )}
 
-                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                      {phraseWords.map((word, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-center gap-2 rounded-xl border border-border/60 bg-background/80 px-2.5 py-1.5"
-                        >
-                          <span className="text-[10px] font-bold text-muted-foreground select-none w-4 text-right">
-                            {idx + 1}.
-                          </span>
-                          <span className="font-mono text-xs font-semibold text-foreground truncate">
-                            {word}
-                          </span>
-                        </div>
-                      ))}
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">
+                          Your Permanent Access Number
+                        </span>
+                        <span className="font-mono text-base font-bold text-primary tracking-widest block mt-0.5">
+                          {permanentKey}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="mt-3.5 flex flex-wrap gap-2 pt-2 border-t border-border/40">
                       <button
-                        onClick={handleCopyPhrase}
+                        onClick={handleCopyPermanentKey}
                         className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-primary/10 border border-primary/30 px-3 py-2 text-xs font-bold text-primary hover:bg-primary/20 transition-colors"
                       >
-                        <Copy className="size-3.5" /> Copy 12 Words
+                        <Copy className="size-3.5" /> Copy Permanent Key
                       </button>
                       <button
                         onClick={handleCopyBackup}
                         className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-secondary border border-border px-3 py-2 text-xs font-semibold text-secondary-foreground hover:bg-muted transition-colors"
                       >
-                        <Download className="size-3.5" /> Copy Full Backup
+                        <Download className="size-3.5" /> Copy Full Backup Payload
                       </button>
                     </div>
                   </div>
                 </div>
 
-                {/* RESTORE ACCOUNT SECTION */}
+                {/* ACCESS ON ANOTHER DEVICE / RESTORE ACCOUNT SECTION */}
                 <div className="border-t border-border pt-5">
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="text-sm font-bold text-foreground">
-                        Restore Identity & Data
+                        Access Account on Another Device
                       </h3>
                       <p className="text-xs text-muted-foreground">
-                        Restore identity and spaces on a new device or cleared browser.
+                        Enter your permanent access key to switch or restore identity & data on this device.
                       </p>
                     </div>
                     <button
                       onClick={() => setShowRestoreForm(!showRestoreForm)}
-                      className="rounded-xl bg-secondary border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+                      className="rounded-xl bg-secondary border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors shrink-0"
                     >
-                      {showRestoreForm ? "Cancel" : "Restore Account"}
+                      {showRestoreForm ? "Cancel" : "Enter Key"}
                     </button>
                   </div>
 
                   {showRestoreForm && (
                     <div className="mt-3.5 space-y-3 rounded-2xl border border-primary/30 bg-primary/5 p-4">
                       <label className="block text-xs font-medium text-foreground">
-                        Enter 12-Word Recovery Phrase or Backup Payload:
+                        Enter Permanent Access Number (e.g. 8492-3841-9021):
                       </label>
-                      <textarea
+                      <input
+                        type="text"
                         value={restoreInput}
                         onChange={(e) => setRestoreInput(e.target.value)}
-                        placeholder="e.g. apple banana cherry dog eagle fox grape house island jungle kite lemon"
-                        rows={3}
+                        placeholder="e.g. 8492-3841-9021 or HEYMAMA_KEY_..."
                         className="w-full rounded-xl border border-border bg-background p-3 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                       />
                       <button
                         onClick={handleRestoreAccount}
                         className="w-full rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground hover:opacity-90 transition-opacity shadow-sm"
                       >
-                        Restore Identity Now
+                        Access Account & Load Data
                       </button>
                     </div>
                   )}

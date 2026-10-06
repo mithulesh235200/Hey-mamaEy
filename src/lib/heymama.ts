@@ -98,12 +98,12 @@ export function useChatState(): State {
 }
 
 import {
-  generateSecretRecoveryPhrase,
-  deriveUserIdFromPhrase,
+  generatePermanentAccessKey,
+  deriveUserIdFromAccessKey,
   createFullBackupPayload,
   parseBackupInput,
-  validateSecretRecoveryPhrase,
-} from "./recovery";
+  validatePermanentAccessKey,
+} from "./accessKey";
 
 /* ---------- persistence of local prefs ---------- */
 
@@ -111,10 +111,10 @@ type Prefs = {
   userId: string;
   displayName: string;
   codes: string[];
-  recoveryPhrase?: string;
+  permanentKey?: string;
 };
 
-let prefs: Prefs = { userId: "", displayName: "You", codes: [], recoveryPhrase: "" };
+let prefs: Prefs = { userId: "", displayName: "You", codes: [], permanentKey: "" };
 
 function savePrefs() {
   if (typeof window === "undefined") return;
@@ -134,14 +134,14 @@ function loadPrefs() {
     /* ignore */
   }
 
-  // Generate 12-word secret recovery phrase if not present
-  if (!prefs.recoveryPhrase) {
-    prefs.recoveryPhrase = generateSecretRecoveryPhrase();
+  // Generate permanent access key if not present
+  if (!prefs.permanentKey) {
+    prefs.permanentKey = generatePermanentAccessKey();
   }
 
-  // Derive deterministic userId from recovery phrase if missing
+  // Derive deterministic userId from permanent access key if missing
   if (!prefs.userId) {
-    prefs.userId = deriveUserIdFromPhrase(prefs.recoveryPhrase);
+    prefs.userId = deriveUserIdFromAccessKey(prefs.permanentKey);
   }
   savePrefs();
 }
@@ -605,32 +605,32 @@ export function getUnreadCount(
   ).length;
 }
 
-/* ---------- Secret Recovery Phrase & Identity Restore ---------- */
+/* ---------- Permanent Access Key & Identity Restore ---------- */
 
-export function getRecoveryPhrase(): string {
+export function getPermanentKey(): string {
   loadPrefs();
-  return prefs.recoveryPhrase || "";
+  return prefs.permanentKey || "";
 }
 
 export function getBackupPayload(): string {
   loadPrefs();
-  const phrase = prefs.recoveryPhrase || "";
-  return createFullBackupPayload(phrase, prefs.displayName, prefs.codes);
+  const key = prefs.permanentKey || "";
+  return createFullBackupPayload(key, prefs.displayName, prefs.codes);
 }
 
-export function restoreIdentityFromPhrase(input: string): {
+export function restoreFromPermanentKey(input: string): {
   success: boolean;
   message: string;
   userId?: string;
 } {
   try {
     const parsed = parseBackupInput(input);
-    const validation = validateSecretRecoveryPhrase(parsed.phrase);
+    const validation = validatePermanentAccessKey(parsed.key);
     if (!validation.valid) {
-      return { success: false, message: validation.error || "Invalid 12-word phrase" };
+      return { success: false, message: validation.error || "Invalid permanent access key" };
     }
 
-    prefs.recoveryPhrase = validation.words.join(" ");
+    prefs.permanentKey = validation.cleanKey;
     prefs.userId = parsed.userId;
     if (parsed.displayName) {
       prefs.displayName = parsed.displayName;
@@ -646,11 +646,11 @@ export function restoreIdentityFromPhrase(input: string): {
 
     return {
       success: true,
-      message: `Identity restored successfully! (${prefs.userId})`,
+      message: `Access granted! Derived Identity: ${prefs.userId}`,
       userId: prefs.userId,
     };
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Restore failed";
+    const msg = err instanceof Error ? err.message : "Restoration failed";
     return { success: false, message: msg };
   }
 }
