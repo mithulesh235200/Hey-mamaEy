@@ -138,15 +138,22 @@ function loadPrefs() {
     /* ignore */
   }
 
-  // Generate permanent access key if not present
-  if (!prefs.permanentKey) {
+  try {
+    // Validate permanent access key; regenerate if missing or invalid
+    if (!prefs.permanentKey || !validatePermanentAccessKey(prefs.permanentKey).valid) {
+      prefs.permanentKey = generatePermanentAccessKey();
+    }
+
+    // Derive deterministic userId from permanent access key if missing
+    if (!prefs.userId) {
+      prefs.userId = deriveUserIdFromAccessKey(prefs.permanentKey);
+    }
+  } catch {
+    // If derivation throws for any reason, generate a valid key and ID fallback
     prefs.permanentKey = generatePermanentAccessKey();
+    prefs.userId = generateUserId();
   }
 
-  // Derive deterministic userId from permanent access key if missing
-  if (!prefs.userId) {
-    prefs.userId = deriveUserIdFromAccessKey(prefs.permanentKey);
-  }
   savePrefs();
 }
 
@@ -306,20 +313,41 @@ async function refreshActiveSpace() {
 }
 
 export function hydrate() {
-  if (hydrated || typeof window === "undefined") return;
-  hydrated = true;
-  loadPrefs();
-  set({ userId: prefs.userId, displayName: prefs.displayName });
-  void (async () => {
-    await loadSpaces();
-    const inviteCode = new URLSearchParams(window.location.search).get("space");
-    if (!inviteCode) return;
+  if (typeof window === "undefined") return;
 
-    const joined = await joinSpace(inviteCode);
-    if (joined) {
-      window.history.replaceState({}, "", window.location.pathname);
+  // Fail-safe timeout: ensure ready is NEVER trapped at false on mobile devices
+  setTimeout(() => {
+    if (!state.ready) {
+      set({ ready: true });
     }
-  })();
+  }, 1000);
+
+  if (hydrated) {
+    set({ ready: true });
+    return;
+  }
+  hydrated = true;
+
+  try {
+    loadPrefs();
+    set({ userId: prefs.userId, displayName: prefs.displayName, ready: true });
+    void (async () => {
+      try {
+        await loadSpaces();
+      } catch {
+        set({ ready: true });
+      }
+      const inviteCode = new URLSearchParams(window.location.search).get("space");
+      if (!inviteCode) return;
+
+      const joined = await joinSpace(inviteCode);
+      if (joined) {
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    })();
+  } catch {
+    set({ ready: true });
+  }
 
   if (!pollTimer) {
     pollTimer = setInterval(() => {

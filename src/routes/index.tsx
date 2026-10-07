@@ -42,6 +42,9 @@ export const Route = createFileRoute("/")({
 
 function Index() {
   const state = useChatState();
+  if (typeof window !== "undefined" && !state.ready) {
+    hydrate();
+  }
   const [forwarding, setForwarding] = useState<Message | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileTab, setMobileTab] = useState<MobileTab>("spaces");
