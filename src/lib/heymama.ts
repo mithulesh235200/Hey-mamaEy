@@ -258,12 +258,17 @@ export async function syncUserSpacesFromCloud(userId: string): Promise<string[]>
 }
 
 async function loadSpaces() {
+  // Local identity is already hydrated from storage. Render the app before
+  // waiting on Supabase so a slow or unavailable network cannot trap mobile
+  // users on the startup screen.
+  set({ ready: true });
+
   if (prefs.userId && prefs.codes.length === 0) {
     await syncUserSpacesFromCloud(prefs.userId);
   }
 
   if (prefs.codes.length === 0) {
-    set({ spaces: [], messages: [], ready: true });
+    set({ spaces: [], messages: [] });
     return;
   }
 
@@ -279,7 +284,6 @@ async function loadSpaces() {
     set({
       spaces,
       messages: validMessages,
-      ready: true,
       activeSpaceId:
         state.activeSpaceId && ids.includes(state.activeSpaceId)
           ? state.activeSpaceId
