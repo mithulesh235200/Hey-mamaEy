@@ -503,7 +503,11 @@ export function InAppCall({
         if (payload.from === userId) return;
 
         // If we are already in this call as the answerer, reply with our current answer
-        if (activeRef.current && payload.callId === callIdRef.current && peerRef.current?.localDescription) {
+        if (
+          activeRef.current &&
+          payload.callId === callIdRef.current &&
+          peerRef.current?.localDescription
+        ) {
           await send("call-answer", {
             callId: payload.callId,
             from: userId,
@@ -564,7 +568,10 @@ export function InAppCall({
       })
       .on("broadcast", { event: "call-end" }, ({ payload }: { payload: CallSignal }) => {
         if (payload.from === userId) return;
-        if (payload.callId === callIdRef.current || payload.callId === incomingRef.current?.callId) {
+        if (
+          payload.callId === callIdRef.current ||
+          payload.callId === incomingRef.current?.callId
+        ) {
           closePeer();
           onClose();
         }

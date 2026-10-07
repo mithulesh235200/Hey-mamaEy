@@ -93,6 +93,16 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      get_user_spaces: {
+        Args: { p_user_id: string };
+        Returns: {
+          code: string;
+          created_at: string;
+          id: string;
+          name: string;
+          owner_id: string | null;
+        }[];
+      };
       get_space_messages_since: {
         Args: { p_after: string; p_code: string };
         Returns: {

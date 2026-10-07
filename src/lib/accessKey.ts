@@ -35,7 +35,10 @@ export function validatePermanentAccessKey(input: string): {
   }
 
   // Remove non-alphanumeric characters for clean parsing
-  const clean = input.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const clean = input
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
   if (clean.length < 8) {
     return {
       valid: false,
@@ -129,7 +132,12 @@ export function parseBackupInput(input: string): {
       const prefix = clean.startsWith("HEYMAMA_KEY_") ? "HEYMAMA_KEY_" : "HEYMAMA_BACKUP_";
       const rawB64 = clean.slice(prefix.length);
       const jsonStr = decodeURIComponent(escape(atob(rawB64)));
-      const parsed = JSON.parse(jsonStr) as { key?: string; phrase?: string; displayName?: string; codes?: string[] };
+      const parsed = JSON.parse(jsonStr) as {
+        key?: string;
+        phrase?: string;
+        displayName?: string;
+        codes?: string[];
+      };
       const secretKey = parsed.key || parsed.phrase;
       if (secretKey) {
         const userId = deriveUserIdFromAccessKey(secretKey);

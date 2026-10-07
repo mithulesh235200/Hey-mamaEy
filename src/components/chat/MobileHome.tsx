@@ -33,11 +33,13 @@ type MobileHomeProps = {
   activeSpaceId: string | null;
   readTimestamps: Record<string, number>;
   showBottomNav: boolean;
+  tab: MobileTab;
+  onTabChange: (tab: MobileTab) => void;
   onOpenSettings: () => void;
   onClose?: () => void;
 };
 
-type MobileTab = "spaces" | "profile";
+export type MobileTab = "spaces" | "profile";
 
 export function MobileHome({
   userId,
@@ -47,10 +49,11 @@ export function MobileHome({
   activeSpaceId,
   readTimestamps,
   showBottomNav,
+  tab,
+  onTabChange,
   onOpenSettings,
   onClose,
 }: MobileHomeProps) {
-  const [tab, setTab] = useState<MobileTab>("spaces");
   const [editingName, setEditingName] = useState(displayName === "You" ? "" : displayName);
   const [spaceName, setSpaceName] = useState("");
   const [joinCode, setJoinCode] = useState("");
@@ -153,7 +156,7 @@ export function MobileHome({
           {tab === "profile" && (
             <button
               type="button"
-              onClick={() => setTab("spaces")}
+              onClick={() => onTabChange("spaces")}
               aria-label="Back to spaces"
               title="Back to spaces"
               className="mobile-icon-button"
@@ -215,7 +218,7 @@ export function MobileHome({
               </div>
               <button
                 type="button"
-                onClick={() => setTab("profile")}
+                onClick={() => onTabChange("profile")}
                 className="mobile-subtle-button"
               >
                 Profile <ChevronRight className="size-4" aria-hidden="true" />
@@ -429,7 +432,7 @@ export function MobileHome({
         <button
           type="button"
           aria-current={tab === "spaces" ? "page" : undefined}
-          onClick={() => setTab("spaces")}
+          onClick={() => onTabChange("spaces")}
           className={`mobile-nav-item ${tab === "spaces" ? "is-active" : ""}`}
         >
           <Hash className="size-5" aria-hidden="true" />
@@ -438,7 +441,7 @@ export function MobileHome({
         <button
           type="button"
           aria-current={tab === "profile" ? "page" : undefined}
-          onClick={() => setTab("profile")}
+          onClick={() => onTabChange("profile")}
           className={`mobile-nav-item ${tab === "profile" ? "is-active" : ""}`}
         >
           <UserRound className="size-5" aria-hidden="true" />

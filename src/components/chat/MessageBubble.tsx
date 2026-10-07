@@ -508,7 +508,8 @@ export function MessageBubble({
                 }}
                 className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-foreground hover:bg-secondary hover:text-amber-400 transition-colors"
               >
-                <Star className="size-4 text-amber-400" /> {isStarred ? "Unstar message" : "Star message"}
+                <Star className="size-4 text-amber-400" />{" "}
+                {isStarred ? "Unstar message" : "Star message"}
               </button>
               <button
                 type="button"

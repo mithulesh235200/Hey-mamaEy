@@ -1,7 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Menu } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
-import { MobileHome } from "@/components/chat/MobileHome";
+import { App } from "@capacitor/app";
+import { Capacitor } from "@capacitor/core";
+import { MobileHome, type MobileTab } from "@/components/chat/MobileHome";
 import { Sidebar } from "@/components/chat/Sidebar";
 import { hydrate, useChatState, type Message } from "@/lib/heymama";
 
@@ -42,8 +44,13 @@ function Index() {
   const state = useChatState();
   const [forwarding, setForwarding] = useState<Message | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileTab, setMobileTab] = useState<MobileTab>("spaces");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileQuickBar, setMobileQuickBar] = useState(true);
+  const activeSpace = state.spaces.find((s) => s.id === state.activeSpaceId) ?? null;
+  const activeMessages = activeSpace
+    ? state.messages.filter((m) => m.spaceId === activeSpace.id)
+    : [];
 
   useEffect(() => {
     hydrate();
@@ -63,6 +70,46 @@ function Index() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    let active = true;
+    let removeListener: (() => void) | undefined;
+
+    void App.addListener("backButton", () => {
+      if (settingsOpen) {
+        setSettingsOpen(false);
+        return;
+      }
+
+      if (activeSpace && mobileOpen) {
+        setMobileOpen(false);
+        return;
+      }
+
+      if (activeSpace) {
+        setMobileTab("profile");
+        setMobileOpen(true);
+        return;
+      }
+
+      if (mobileTab === "spaces") {
+        setMobileTab("profile");
+        return;
+      }
+
+      void App.minimizeApp();
+    }).then((listener) => {
+      if (active) removeListener = () => void listener.remove();
+      else void listener.remove();
+    });
+
+    return () => {
+      active = false;
+      removeListener?.();
+    };
+  }, [activeSpace, mobileOpen, mobileTab, settingsOpen]);
+
   if (!state.ready) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-background px-6 text-foreground">
@@ -80,11 +127,6 @@ function Index() {
       </main>
     );
   }
-
-  const activeSpace = state.spaces.find((s) => s.id === state.activeSpaceId) ?? null;
-  const activeMessages = activeSpace
-    ? state.messages.filter((m) => m.spaceId === activeSpace.id)
-    : [];
 
   return (
     <main className="flex h-screen h-[100dvh] overflow-hidden bg-background text-foreground">
@@ -127,6 +169,8 @@ function Index() {
             activeSpaceId={state.activeSpaceId}
             readTimestamps={state.readTimestamps}
             showBottomNav={mobileQuickBar}
+            tab={mobileTab}
+            onTabChange={setMobileTab}
             onOpenSettings={() => setSettingsOpen(true)}
             {...(activeSpace ? { onClose: () => setMobileOpen(false) } : {})}
           />

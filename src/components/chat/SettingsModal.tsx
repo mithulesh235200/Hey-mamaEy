@@ -772,7 +772,8 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
                         <Key className="size-4 text-primary" /> Permanent Secret Access Key
                       </h3>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Your permanent secret access number. Use this number to access your account & data on any device.
+                        Your permanent secret access number. Use this number to access your account
+                        & data on any device.
                       </p>
                     </div>
                     <button
@@ -847,7 +848,8 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
                         Access Account on Another Device
                       </h3>
                       <p className="text-xs text-muted-foreground">
-                        Enter your permanent access key to switch or restore identity & data on this device.
+                        Enter your permanent access key to switch or restore identity & data on this
+                        device.
                       </p>
                     </div>
                     <button

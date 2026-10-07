@@ -27,12 +27,7 @@ const ICE_SERVERS: RTCConfiguration = {
 const CHUNK_SIZE = 32768; // 32 KB chunks for high WebRTC throughput
 
 export type P2PTransferStatus =
-  | "idle"
-  | "connecting"
-  | "transferring"
-  | "completed"
-  | "failed"
-  | "cancelled";
+  "idle" | "connecting" | "transferring" | "completed" | "failed" | "cancelled";
 
 export type P2PProgressInfo = {
   transferId: string;
@@ -82,7 +77,8 @@ export class P2PFileSenderSession {
   private notify(error?: string, blobUrl?: string) {
     const elapsed = (Date.now() - (this.startTime || Date.now())) / 1000;
     const speedMbps = elapsed > 0 ? (this.bytesSent * 8) / (elapsed * 1000000) : 0;
-    const pct = this.file.size > 0 ? Math.min(100, Math.round((this.bytesSent / this.file.size) * 100)) : 0;
+    const pct =
+      this.file.size > 0 ? Math.min(100, Math.round((this.bytesSent / this.file.size) * 100)) : 0;
 
     const info: P2PProgressInfo = {
       transferId: this.transferId,
@@ -145,13 +141,13 @@ export class P2PFileSenderSession {
         .on("broadcast", { event: "request-offer" }, () => {
           void this.createAndSendOffer();
         })
-        .on("broadcast", { event: "sdp-answer" }, (msg: any) => {
+        .on("broadcast", { event: "sdp-answer" }, (msg) => {
           const answer = msg["payload"]?.answer;
           if (answer && this.pc) {
             void this.pc.setRemoteDescription(new RTCSessionDescription(answer));
           }
         })
-        .on("broadcast", { event: "ice-candidate" }, (msg: any) => {
+        .on("broadcast", { event: "ice-candidate" }, (msg) => {
           const candidate = msg["payload"]?.candidate;
           const from = msg["payload"]?.from;
           if (candidate && this.pc && from !== this.userId) {
@@ -300,7 +296,10 @@ export class P2PFileReceiverSession {
   private notify(error?: string, blobUrl?: string) {
     const elapsed = (Date.now() - (this.startTime || Date.now())) / 1000;
     const speedMbps = elapsed > 0 ? (this.bytesReceived * 8) / (elapsed * 1000000) : 0;
-    const pct = this.totalBytes > 0 ? Math.min(100, Math.round((this.bytesReceived / this.totalBytes) * 100)) : 0;
+    const pct =
+      this.totalBytes > 0
+        ? Math.min(100, Math.round((this.bytesReceived / this.totalBytes) * 100))
+        : 0;
 
     const info: P2PProgressInfo = {
       transferId: this.transferId,
@@ -375,7 +374,7 @@ export class P2PFileReceiverSession {
       // Supabase Signaling Channel
       this.channel = supabase.channel(`p2p-transfer-${this.transferId}`);
       this.channel
-        .on("broadcast", { event: "sdp-offer" }, async (msg: any) => {
+        .on("broadcast", { event: "sdp-offer" }, async (msg) => {
           const payload = msg["payload"];
           const offer = payload?.offer;
           if (offer && this.pc) {
@@ -396,7 +395,7 @@ export class P2PFileReceiverSession {
             }
           }
         })
-        .on("broadcast", { event: "ice-candidate" }, (msg: any) => {
+        .on("broadcast", { event: "ice-candidate" }, (msg) => {
           const payload = msg["payload"];
           const candidate = payload?.candidate;
           const from = payload?.from;
@@ -421,7 +420,9 @@ export class P2PFileReceiverSession {
 
   private finishTransfer() {
     try {
-      const blob = new Blob(this.receivedChunks, { type: this.mimeType || "application/octet-stream" });
+      const blob = new Blob(this.receivedChunks, {
+        type: this.mimeType || "application/octet-stream",
+      });
       const blobUrl = URL.createObjectURL(blob);
       this.status = "completed";
       this.notify(undefined, blobUrl);
@@ -451,7 +452,11 @@ export class P2PFileReceiverSession {
 }
 
 // Global Manager Functions
-export function createP2PSender(transferId: string, file: File, userId: string): P2PFileSenderSession {
+export function createP2PSender(
+  transferId: string,
+  file: File,
+  userId: string,
+): P2PFileSenderSession {
   const existing = activeSenders.get(transferId);
   if (existing) return existing;
 

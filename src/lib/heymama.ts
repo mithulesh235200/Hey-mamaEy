@@ -239,14 +239,12 @@ function filterRetained(messages: Message[]): Message[] {
 export async function syncUserSpacesFromCloud(userId: string): Promise<string[]> {
   if (!userId) return [];
   try {
-    const { data, error } = await (supabase.rpc as any)("get_user_spaces", {
+    const { data, error } = await supabase.rpc("get_user_spaces", {
       p_user_id: userId,
     });
     if (error || !data || !Array.isArray(data)) return [];
     const rows = data as unknown as SpaceRow[];
-    const cloudCodes = rows
-      .map((s) => s.code)
-      .filter((c: string): c is string => Boolean(c));
+    const cloudCodes = rows.map((s) => s.code).filter((c: string): c is string => Boolean(c));
 
     if (cloudCodes.length > 0) {
       const merged = [...new Set([...prefs.codes, ...cloudCodes])];
