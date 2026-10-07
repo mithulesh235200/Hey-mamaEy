@@ -64,6 +64,7 @@ import {
   type Space,
 } from "@/lib/heymama";
 import { MessageBubble } from "./MessageBubble";
+import { createP2PSender } from "@/lib/p2p-file";
 
 const InAppCall = lazy(() =>
   import("./InAppCall").then((module) => ({ default: module.InAppCall })),
@@ -225,6 +226,7 @@ export function ChatPanel({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const p2pFileInputRef = useRef<HTMLInputElement>(null);
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -799,6 +801,27 @@ export function ChatPanel({
       } catch {
         toast.error(`Couldn't read ${file.name}`);
       }
+    }
+  };
+
+  const handleP2PFileShare = async (files: FileList | null) => {
+    if (!files || !space) return;
+    for (const file of Array.from(files)) {
+      const transferId = `p2p_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+      const sender = createP2PSender(transferId, file, userId);
+      void sender.start();
+
+      await push("p2p_file", {
+        p2pTransferId: transferId,
+        p2pFileName: file.name,
+        p2pFileSize: file.size,
+        p2pMimeType: file.type || "application/octet-stream",
+        text: `⚡ P2P Direct Stream: ${file.name} (${formatBytes(file.size)})`,
+      });
+      toast.success(`Started P2P Direct Share for ${file.name}!`, {
+        description: "Zero server storage — file streams directly browser-to-browser.",
+      });
     }
   };
 
@@ -1570,6 +1593,11 @@ export function ChatPanel({
           <div className="mb-2 grid grid-cols-3 gap-2 md:hidden">
             {[
               {
+                label: "⚡ P2P Direct Share",
+                action: () => p2pFileInputRef.current?.click(),
+                icon: <Zap className="size-4 text-emerald-400" />,
+              },
+              {
                 label: "Photo or video",
                 action: () => mediaInputRef.current?.click(),
                 icon: <ImageIcon className="size-4" />,
@@ -1617,6 +1645,9 @@ export function ChatPanel({
         )}
         <div className="flex items-end gap-2 md:flex-wrap">
           <div className="hidden shrink-0 gap-1 md:flex">
+            <IconBtn label="⚡ P2P Direct Share" onClick={() => p2pFileInputRef.current?.click()}>
+              <Zap className="size-4 text-emerald-400" />
+            </IconBtn>
             <IconBtn label="Send image" onClick={() => mediaInputRef.current?.click()}>
               <ImageIcon className="size-4" />
             </IconBtn>
@@ -1711,6 +1742,16 @@ export function ChatPanel({
           hidden
           onChange={(e) => {
             void handleFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <input
+          ref={p2pFileInputRef}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            void handleP2PFileShare(e.target.files);
             e.target.value = "";
           }}
         />

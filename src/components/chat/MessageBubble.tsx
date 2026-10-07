@@ -22,6 +22,7 @@ import {
 import { toast } from "sonner";
 import { formatBytes, type Message } from "@/lib/heymama";
 import { AudioMessage } from "./AudioMessage";
+import { P2PFileBubble } from "./P2PFileBubble";
 
 const POLL_VOTE_PREFIX = "__poll_vote__:";
 
@@ -290,6 +291,10 @@ export function MessageBubble({
 
           {message.kind === "audio" && message.dataUrl && (
             <AudioMessage dataUrl={message.dataUrl} mine={mine} />
+          )}
+
+          {message.kind === "p2p_file" && (
+            <P2PFileBubble message={message} currentUserId={currentUserId || ""} />
           )}
 
           {message.kind === "file" && (
