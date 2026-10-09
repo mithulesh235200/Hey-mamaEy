@@ -22,6 +22,7 @@ import {
   Eye,
   EyeOff,
   Download,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -30,6 +31,10 @@ import {
   getPermanentKey,
   getBackupPayload,
   restoreFromPermanentKey,
+  forgetIdentity,
+  hydrate,
+  isEphemeralDevice,
+  setEphemeralDevice,
 } from "@/lib/heymama";
 
 export type Theme = "dark" | "light" | "cyberpunk" | "sunset" | "ocean";
@@ -116,6 +121,7 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
   const [showPermanentKey, setShowPermanentKey] = useState(false);
   const [restoreInput, setRestoreInput] = useState("");
   const [showRestoreForm, setShowRestoreForm] = useState(false);
+  const [ephemeral, setEphemeral] = useState<boolean>(() => isEphemeralDevice());
 
   const permanentKey = getPermanentKey();
 
@@ -889,6 +895,69 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
                     className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-xs font-semibold text-destructive hover:bg-destructive/20 transition-colors w-full justify-center"
                   >
                     <RefreshCw className="size-4" /> Regenerate Random Identity
+                  </button>
+                </div>
+
+                {/* SHARED-DEVICE SAFETY */}
+                <div className="border-t border-border pt-4 space-y-3">
+                  <div className="flex items-center justify-between rounded-xl border border-border p-3.5 bg-muted/20">
+                    <div className="pr-3">
+                      <p className="text-xs font-semibold text-foreground">
+                        Shared device — forget me on close
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        Erases this browser&apos;s identity key when the tab closes. Turn on for
+                        public or shared computers.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={ephemeral}
+                      aria-label="Forget identity when the tab closes"
+                      onClick={() => {
+                        const next = !ephemeral;
+                        setEphemeralDevice(next);
+                        setEphemeral(next);
+                        toast.success(
+                          next ? "Shared-device mode on" : "Shared-device mode off",
+                          {
+                            description: next
+                              ? "This browser will forget your identity when the tab closes."
+                              : "Your identity stays on this device.",
+                          },
+                        );
+                      }}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                        ephemeral ? "bg-primary" : "bg-muted"
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block size-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                          ephemeral ? "translate-x-5" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          "Erase this device's identity? You will need your permanent key to get back in.",
+                        )
+                      ) {
+                        forgetIdentity();
+                        hydrate();
+                        toast.success("This device forgotten", {
+                          description: "A fresh identity was created. Your key still works elsewhere.",
+                        });
+                        onClose();
+                      }
+                    }}
+                    className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-xs font-semibold text-destructive hover:bg-destructive/20 transition-colors w-full justify-center"
+                  >
+                    <Trash2 className="size-4" /> Erase identity from this device
                   </button>
                 </div>
               </div>

@@ -424,6 +424,17 @@ async function refreshActiveSpace() {
 export function hydrate() {
   if (typeof window === "undefined") return;
 
+  // Shared-device safety: never resume a previous identity here.
+  if (isEphemeralDevice()) {
+    wipeStoredIdentity();
+  }
+  if (!ephemeralListenerAttached) {
+    ephemeralListenerAttached = true;
+    window.addEventListener("pagehide", () => {
+      if (isEphemeralDevice()) wipeStoredIdentity();
+    });
+  }
+
   // Fail-safe timeout: ensure ready is NEVER trapped at false on mobile devices
   setTimeout(() => {
     if (!state.ready) {
@@ -817,6 +828,53 @@ export function getUnreadCount(
 }
 
 /* ---------- Permanent Access Key & Identity Restore ---------- */
+
+const EPHEMERAL_KEY = "heymamaey.ephemeral";
+
+/** True when this browser must forget the identity after the tab closes. */
+export function isEphemeralDevice(): boolean {
+  try {
+    return localStorage.getItem(EPHEMERAL_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function setEphemeralDevice(on: boolean) {
+  try {
+    if (on) localStorage.setItem(EPHEMERAL_KEY, "true");
+    else localStorage.removeItem(EPHEMERAL_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function wipeStoredIdentity() {
+  try {
+    window.localStorage.removeItem(PREFS_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+let ephemeralListenerAttached = false;
+
+/** Irreversibly forgets this device's identity key (app preferences are kept). */
+export function forgetIdentity() {
+  if (typeof window === "undefined") return;
+  wipeStoredIdentity();
+  prefs = { userId: "", displayName: "You", codes: [], permanentKey: "" };
+  hydrated = false;
+  set({
+    userId: "",
+    displayName: "You",
+    spaces: [],
+    messages: [],
+    activeSpaceId: null,
+    typingMap: {},
+    readTimestamps: {},
+  });
+}
 
 export function getPermanentKey(): string {
   loadPrefs();
