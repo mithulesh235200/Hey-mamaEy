@@ -321,16 +321,49 @@ export async function syncUserSpacesFromCloud(userId: string): Promise<string[]>
     const { data, error } = await supabase.rpc("get_user_spaces", {
       p_user_id: userId,
     });
-    if (error || !data || !Array.isArray(data)) return [];
-    const rows = data as unknown as SpaceRow[];
+    const rows = !error && data && Array.isArray(data) ? (data as unknown as SpaceRow[]) : [];
     const cloudCodes = rows.map((s) => s.code).filter((c: string): c is string => Boolean(c));
+    // Explicit memberships cover silent + legacy spaces (never messaged, no owner).
+    const memberCodes = await fetchMemberCodes(userId);
 
-    if (cloudCodes.length > 0) {
-      const merged = [...new Set([...prefs.codes, ...cloudCodes])];
+    const merged = [...new Set([...prefs.codes, ...cloudCodes, ...memberCodes])];
+    if (merged.length !== prefs.codes.length) {
       prefs.codes = merged;
       savePrefs();
     }
-    return cloudCodes;
+    return merged;
+  } catch {
+    return [];
+  }
+}
+
+/** Best-effort membership registration (no-op until the migration is applied). */
+async function registerMembership(code: string, userId: string): Promise<void> {
+  if (!code || !userId) return;
+  try {
+    await supabase.rpc("register_space_member", { p_code: code, p_user_id: userId });
+  } catch {
+    /* ignore — membership simply isn't tracked yet */
+  }
+}
+
+/** Backfills memberships for all locally known codes (legacy/silent spaces). */
+function backfillMemberships() {
+  const userId = prefs.userId;
+  if (!userId) return;
+  for (const code of prefs.codes) {
+    void registerMembership(code, userId);
+  }
+}
+
+async function fetchMemberCodes(userId: string): Promise<string[]> {
+  if (!userId) return [];
+  try {
+    const { data, error } = await supabase.rpc("get_member_space_codes", {
+      p_user_id: userId,
+    });
+    if (error || !data) return [];
+    return (data as { code: string }[]).map((r) => r.code).filter(Boolean);
   } catch {
     return [];
   }
@@ -341,6 +374,10 @@ async function loadSpaces() {
   // waiting on Supabase so a slow or unavailable network cannot trap mobile
   // users on the startup screen.
   set({ ready: true });
+
+  // Advertise the memberships this device knows about (heals legacy/silent
+  // spaces for future restores on other devices). Fire-and-forget.
+  backfillMemberships();
 
   if (prefs.userId && prefs.codes.length === 0) {
     await syncUserSpacesFromCloud(prefs.userId);
@@ -471,6 +508,7 @@ export async function createSpace(name: string): Promise<Space | null> {
 
   const space = toSpace(row);
   rememberCode(space.code);
+  void registerMembership(space.code, state.userId);
   set({ spaces: [space, ...state.spaces], activeSpaceId: space.id });
   return space;
 }
@@ -485,12 +523,14 @@ export async function joinSpace(rawCode: string): Promise<Space | null> {
   const local = state.spaces.find((s) => s.code === formatted);
   if (local) {
     set({ activeSpaceId: local.id });
+    void registerMembership(local.code, state.userId);
     return local;
   }
 
   const space = await fetchSpace(formatted);
   if (!space || !space.id || !space.code) return null;
   rememberCode(space.code);
+  void registerMembership(space.code, state.userId);
 
   const history = await fetchMessages(space.code);
   const existingIds = new Set(state.messages.map((m) => m.id));
@@ -813,6 +853,14 @@ export async function restoreFromPermanentKey(input: string): Promise<{
 
     savePrefs();
     set({ userId: prefs.userId, displayName: prefs.displayName });
+
+    // Pull explicit memberships first: this recovers silent + legacy spaces
+    // that owner/author tracking cannot see.
+    const memberCodes = await fetchMemberCodes(prefs.userId);
+    if (memberCodes.length > 0) {
+      prefs.codes = [...new Set([...prefs.codes, ...memberCodes])];
+      savePrefs();
+    }
 
     // Sync cloud spaces for this userId
     await syncUserSpacesFromCloud(prefs.userId);

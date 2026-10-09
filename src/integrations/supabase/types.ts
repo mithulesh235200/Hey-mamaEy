@@ -187,6 +187,16 @@ export type Database = {
         Args: { p_platform?: string; p_token: string; p_user_id: string };
         Returns: boolean;
       };
+      register_space_member: {
+        Args: { p_code: string; p_user_id: string };
+        Returns: boolean;
+      };
+      get_member_space_codes: {
+        Args: { p_user_id: string };
+        Returns: {
+          code: string;
+        }[];
+      };
       get_space_messages: {
         Args: { p_code: string };
         Returns: {
