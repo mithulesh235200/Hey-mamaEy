@@ -59,18 +59,20 @@ import {
   leaveSpace,
   markSpaceMessagesRead,
   markSpaceAsRead,
+  THREAD_MARKER,
   type MediaKind,
   type Message,
   type Space,
 } from "@/lib/heymama";
 import { MessageBubble } from "./MessageBubble";
 import { createP2PSender } from "@/lib/p2p-file";
+import { dataUrlToBlob, uploadAttachment } from "@/lib/attachments";
 
 const InAppCall = lazy(() =>
   import("./InAppCall").then((module) => ({ default: module.InAppCall })),
 );
 
-const MAX_BYTES = 50 * 1024 * 1024; // 50 MB limit
+const MAX_BYTES = 20 * 1024 * 1024; // 20 MB server-upload limit (larger files: use P2P Direct Share)
 const POLL_VOTE_PREFIX = "__poll_vote__:";
 
 function playChime(type: "send" | "receive", muted: boolean) {
@@ -737,7 +739,11 @@ export function ChatPanel({
     }
 
     if (editing) {
-      const updated = await editMessage(editing.id, space.id, value);
+      // Re-attach the thread marker so the reply stays in its thread.
+      const savedText = editing.threadParentId
+        ? `${value}${THREAD_MARKER}${editing.threadParentId}`
+        : value;
+      const updated = await editMessage(editing.id, space.id, savedText);
       if (updated) {
         setText("");
         setEditing(null);
@@ -786,14 +792,27 @@ export function ChatPanel({
     for (const file of Array.from(files)) {
       if (file.size > MAX_BYTES) {
         toast.error(`${file.name} is too large (${formatBytes(file.size)})`, {
-          description: "Keep shared files under 50 MB in this space.",
+          description: "Keep uploads under 20 MB, or use ⚡ P2P Direct Share for bigger files.",
         });
         continue;
       }
       try {
+        const kind = kindForFile(file);
+        // Images are compressed first (existing behavior), then everything is
+        // uploaded to Supabase Storage. Falls back to inline data when offline
+        // or before the space-media migration is applied.
         const dataUrl = await readFileAsDataUrl(file);
-        await push(kindForFile(file), {
-          dataUrl,
+        let remoteUrl: string | null = null;
+        if (kind === "image") {
+          const blob = await dataUrlToBlob(dataUrl);
+          if (blob) {
+            remoteUrl = await uploadAttachment(space.code, blob, file.name, blob.type || file.type);
+          }
+        } else {
+          remoteUrl = await uploadAttachment(space.code, file, file.name, file.type);
+        }
+        await push(kind, {
+          dataUrl: remoteUrl ?? dataUrl,
           fileName: file.name,
           fileSize: file.size,
           mimeType: file.type,
@@ -844,15 +863,29 @@ export function ChatPanel({
       recorder.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunks, { type: recorder.mimeType });
-        const reader = new FileReader();
-        reader.onload = () =>
-          push("audio", {
-            dataUrl: String(reader.result),
-            fileName: "Voice note",
-            fileSize: blob.size,
-            mimeType: blob.type,
-          });
-        reader.readAsDataURL(blob);
+        const mime = blob.type || "audio/webm";
+        void (async () => {
+          // Prefer Supabase Storage; fall back to inline data when unavailable.
+          const url = await uploadAttachment(space.code, blob, "Voice note", mime);
+          if (url) {
+            void push("audio", {
+              dataUrl: url,
+              fileName: "Voice note",
+              fileSize: blob.size,
+              mimeType: mime,
+            });
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = () =>
+            push("audio", {
+              dataUrl: String(reader.result),
+              fileName: "Voice note",
+              fileSize: blob.size,
+              mimeType: mime,
+            });
+          reader.readAsDataURL(blob);
+        })();
       };
       recorder.start();
       recorderRef.current = recorder;
@@ -868,23 +901,50 @@ export function ChatPanel({
 
   const handleShareLocation = () => {
     if (typeof window === "undefined" || !navigator.geolocation) {
-      toast.error("Geolocation is not supported by your browser");
+      toast.error("Location is not supported on this device");
       return;
     }
     toast.info("Acquiring GPS location...");
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        void push("location", {
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          locationName: "Current GPS Location",
+
+    const sendPosition = (pos: GeolocationPosition) => {
+      void push("location", {
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+        locationName: "Current GPS Location",
+      });
+      toast.success("Location shared!");
+    };
+
+    const failFinal = (err: GeolocationPositionError) => {
+      if (err.code === 1) {
+        toast.error("Location permission denied", {
+          description: "Allow location for this app in system settings, then try again.",
         });
-        toast.success("Location shared!");
-      },
+      } else if (err.code === 3) {
+        toast.error("Location timed out", {
+          description: "Move somewhere with a clearer GPS signal and try again.",
+        });
+      } else {
+        toast.error(`Location unavailable: ${err.message || "try again outdoors"}`);
+      }
+    };
+
+    // High accuracy first (GPS); on timeout/unavailable retry with cached
+    // low-power fix so indoor users still get a working share.
+    navigator.geolocation.getCurrentPosition(
+      sendPosition,
       (err) => {
-        toast.error(`Location access error: ${err.message}`);
+        if (err.code === 1) {
+          failFinal(err);
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(sendPosition, failFinal, {
+          enableHighAccuracy: false,
+          timeout: 20000,
+          maximumAge: 120000,
+        });
       },
-      { enableHighAccuracy: true, timeout: 10000 },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 },
     );
   };
 

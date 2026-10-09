@@ -1,11 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Menu } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import { MobileHome, type MobileTab } from "@/components/chat/MobileHome";
 import { Sidebar } from "@/components/chat/Sidebar";
-import { hydrate, useChatState, type Message } from "@/lib/heymama";
+import {
+  hydrate,
+  joinSpace,
+  markSpaceAsRead,
+  useChatState,
+  type Message,
+} from "@/lib/heymama";
+import { flushPushToken, initPushNotifications } from "@/lib/push";
 
 const ChatPanel = lazy(() =>
   import("@/components/chat/ChatPanel").then((m) => ({ default: m.ChatPanel })),
@@ -86,6 +94,43 @@ function Index() {
     };
   }, []);
 
+  const userIdRef = useRef(state.userId);
+  userIdRef.current = state.userId;
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  // Background push notifications (native only; no-op on web).
+  useEffect(() => {
+    void initPushNotifications({
+      getUserId: () => userIdRef.current,
+      onOpenSpace: (code) => {
+        void (async () => {
+          const joined = await joinSpace(code);
+          if (!joined) {
+            toast.error("Invite expired", {
+              description: "No Space exists with that code anymore.",
+            });
+            return;
+          }
+          markSpaceAsRead(joined.id);
+          setMobileTab("spaces");
+          setMobileOpen(false);
+        })();
+      },
+      onForegroundMessage: (code, title, body) => {
+        const current = stateRef.current;
+        const space = current.spaces.find((s) => s.code === code);
+        // Already viewing it: the in-app chime already fired.
+        if (space && space.id === current.activeSpaceId) return;
+        toast.info(title, { description: body || code });
+      },
+    });
+  }, []);
+
+  useEffect(() => {
+    if (state.userId) void flushPushToken(state.userId);
+  }, [state.userId]);
+
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
 
@@ -98,19 +143,16 @@ function Index() {
         return;
       }
 
-      if (activeSpace && mobileOpen) {
-        setMobileOpen(false);
-        return;
-      }
-
-      if (activeSpace) {
-        setMobileTab("profile");
+      // In a chat (list hidden) -> system Back opens the Spaces list, never Profile.
+      if (activeSpace && !mobileOpen) {
+        setMobileTab("spaces");
         setMobileOpen(true);
         return;
       }
 
-      if (mobileTab === "spaces") {
-        setMobileTab("profile");
+      // On the mobile list overlay: Profile tab -> Spaces tab, Spaces tab -> exit app.
+      if (mobileOpen && mobileTab !== "spaces") {
+        setMobileTab("spaces");
         return;
       }
 
@@ -127,7 +169,7 @@ function Index() {
   }, [activeSpace, mobileOpen, mobileTab, settingsOpen]);
 
   // Android browsers do not emit Capacitor's backButton event. Keep a same-page
-  // history entry so the browser's Back action returns to the in-app Profile.
+  // history entry so the browser's Back action returns to the Spaces list.
   useEffect(() => {
     if (Capacitor.isNativePlatform()) return;
 
@@ -138,14 +180,17 @@ function Index() {
       const current = backState.current;
       if (current.settingsOpen) {
         setSettingsOpen(false);
-      } else if (current.activeSpace && current.mobileOpen) {
-        setMobileOpen(false);
-      } else if (current.activeSpace || current.mobileTab === "spaces") {
-        setMobileTab("profile");
+      } else if (current.activeSpace && !current.mobileOpen) {
+        // In a chat -> browser Back opens the Spaces list, never Profile.
+        setMobileTab("spaces");
+        setMobileOpen(true);
+      } else if (current.mobileOpen && current.mobileTab !== "spaces") {
+        // On the mobile list overlay on Profile -> go to Spaces.
+        setMobileTab("spaces");
         setMobileOpen(true);
       } else {
-        // Retain an in-app history entry after handling Back so a second Back
-        // can follow normal browser navigation from the profile screen.
+        // Already on the Spaces list / welcome screen: let the browser
+        // navigate normally instead of trapping the user.
         return;
       }
 
@@ -195,12 +240,21 @@ function Index() {
             userId={state.userId}
             displayName={state.displayName}
             onForward={setForwarding}
-            onOpenSidebar={() => setMobileOpen(true)}
+            onOpenSidebar={() => {
+              setMobileTab("spaces");
+              setMobileOpen(true);
+            }}
             mobileQuickBar={false}
           />
         </Suspense>
       ) : (
-        <WelcomePanel onOpenSidebar={() => setMobileOpen(true)} mobileQuickBar={mobileQuickBar} />
+        <WelcomePanel
+          onOpenSidebar={() => {
+            setMobileTab("spaces");
+            setMobileOpen(true);
+          }}
+          mobileQuickBar={mobileQuickBar}
+        />
       )}
 
       {(!activeSpace || mobileOpen) && (

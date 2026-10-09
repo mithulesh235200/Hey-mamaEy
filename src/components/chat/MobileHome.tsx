@@ -140,6 +140,9 @@ export function MobileHome({
     const last = messages.filter((message) => message.spaceId === spaceId).at(-1);
     if (!last) return "No messages yet";
     if (last.kind === "text") return last.text || "Message";
+    if (last.kind === "location") return "📍 Location shared";
+    if (last.kind === "p2p_file")
+      return `⚡ P2P: ${last.p2pFileName || last.fileName || "file shared"}`;
     return `${last.kind === "file" ? "Document" : last.kind} shared`;
   };
 

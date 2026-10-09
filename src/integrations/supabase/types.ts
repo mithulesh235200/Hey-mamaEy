@@ -183,6 +183,10 @@ export type Database = {
         Args: { p_code: string; p_reader_id: string };
         Returns: number;
       };
+      register_push_token: {
+        Args: { p_platform?: string; p_token: string; p_user_id: string };
+        Returns: boolean;
+      };
       get_space_messages: {
         Args: { p_code: string };
         Returns: {

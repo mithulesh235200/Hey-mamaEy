@@ -157,6 +157,15 @@ function loadPrefs() {
   savePrefs();
 }
 
+/* ---------- wire markers ---------- */
+
+// The `send_space_message` RPC only accepts classic kinds, so location,
+// P2P invites and thread links are encoded into the legacy text/file
+// columns and decoded back in toMessage. No DB migration required.
+const P2P_MARKER = "__p2p__:";
+const LOCATION_MARKER = "__location__:";
+export const THREAD_MARKER = "\n__thread__:";
+
 /* ---------- mapping ---------- */
 
 type SpaceRow = {
@@ -190,21 +199,84 @@ const toSpace = (r: SpaceRow): Space => ({
   ...(r.owner_id !== undefined && { ownerId: r.owner_id }),
 });
 
-const toMessage = (r: MessageRow): Message => ({
-  id: r.id,
-  spaceId: r.space_id,
-  authorId: r.author_id,
-  authorName: r.author_name,
-  kind: r.kind as MediaKind,
-  ...(r.text !== null && { text: r.text }),
-  ...(r.data_url !== null && { dataUrl: r.data_url }),
-  ...(r.file_name !== null && { fileName: r.file_name }),
-  ...(r.file_size !== null && { fileSize: Number(r.file_size) }),
-  ...(r.mime_type !== null && { mimeType: r.mime_type }),
-  forwarded: r.forwarded,
-  ...(r.read_at != null && { isRead: true, readAt: new Date(r.read_at).getTime() }),
-  createdAt: new Date(r.created_at).getTime(),
-});
+const toMessage = (r: MessageRow): Message => {
+  // Wire decoding: location & P2P invites travel inside the legacy
+  // text/file columns because the `send_space_message` RPC only accepts the
+  // classic kinds (text/image/video/audio/file). See insertMessage below.
+  let kind = r.kind as MediaKind;
+  let text: string | undefined = r.text ?? undefined;
+  let fileName: string | undefined = r.file_name ?? undefined;
+  let fileSize: number | undefined = r.file_size != null ? Number(r.file_size) : undefined;
+  let threadParentId: string | undefined;
+
+  if (text && text.includes(THREAD_MARKER)) {
+    const idx = text.lastIndexOf(THREAD_MARKER);
+    threadParentId = text.slice(idx + THREAD_MARKER.length).trim() || undefined;
+    text = text.slice(0, idx) || undefined;
+  }
+
+  let latitude: number | undefined;
+  let longitude: number | undefined;
+  let locationName: string | undefined;
+  if (kind === "text" && text?.startsWith(LOCATION_MARKER)) {
+    const payload = text.slice(LOCATION_MARKER.length);
+    const [coords, ...nameParts] = payload.split("|");
+    const [latStr, lngStr] = (coords ?? "").split(",");
+    const lat = Number(latStr);
+    const lng = Number(lngStr);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      kind = "location";
+      latitude = lat;
+      longitude = lng;
+      locationName = nameParts.join("|") || undefined;
+      text = undefined;
+    }
+  }
+
+  let p2pTransferId: string | undefined;
+  let p2pFileName: string | undefined;
+  let p2pFileSize: number | undefined;
+  let p2pMimeType: string | undefined;
+  if (kind === "file" && text?.startsWith(P2P_MARKER)) {
+    const payload = text.slice(P2P_MARKER.length);
+    const [transferId, sizeStr, ...mimeParts] = payload.split("|");
+    if (transferId) {
+      kind = "p2p_file";
+      p2pTransferId = transferId;
+      const size = Number(sizeStr);
+      p2pFileSize = Number.isFinite(size) ? size : undefined;
+      p2pMimeType = mimeParts.join("|") || undefined;
+      p2pFileName = fileName;
+      text = undefined;
+      // P2P bytes never touch the server, so keep server fileSize empty.
+      fileSize = undefined;
+    }
+  }
+
+  return {
+    id: r.id,
+    spaceId: r.space_id,
+    authorId: r.author_id,
+    authorName: r.author_name,
+    kind,
+    ...(text !== undefined && { text }),
+    ...(r.data_url !== null && { dataUrl: r.data_url }),
+    ...(fileName !== undefined && kind !== "p2p_file" && { fileName }),
+    ...(fileSize !== undefined && kind !== "p2p_file" && { fileSize }),
+    ...(r.mime_type !== null && { mimeType: r.mime_type }),
+    forwarded: r.forwarded,
+    ...(r.read_at != null && { isRead: true, readAt: new Date(r.read_at).getTime() }),
+    ...(latitude !== undefined && { latitude }),
+    ...(longitude !== undefined && { longitude }),
+    ...(locationName !== undefined && { locationName }),
+    ...(threadParentId !== undefined && { threadParentId }),
+    ...(p2pTransferId !== undefined && { p2pTransferId }),
+    ...(p2pFileName !== undefined && { p2pFileName }),
+    ...(p2pFileSize !== undefined && { p2pFileSize }),
+    ...(p2pMimeType !== undefined && { p2pMimeType }),
+    createdAt: new Date(r.created_at).getTime(),
+  };
+};
 
 /* ---------- hydrate + polling ---------- */
 
@@ -291,10 +363,10 @@ async function loadSpaces() {
     set({
       spaces,
       messages: validMessages,
+      // Never auto-open a Space on app launch. The user must tap a Space.
+      // Only keep the current selection if it is still valid.
       activeSpaceId:
-        state.activeSpaceId && ids.includes(state.activeSpaceId)
-          ? state.activeSpaceId
-          : spaces[0]?.id || null,
+        state.activeSpaceId && ids.includes(state.activeSpaceId) ? state.activeSpaceId : null,
     });
   } catch {
     // Keep the application usable if a network request is interrupted.
@@ -365,7 +437,11 @@ export function signInWithId(id: string) {
 }
 
 export function regenerateId() {
-  prefs.userId = generateUserId();
+  // A fresh identity needs a fresh permanent key: the userId is derived from
+  // the key, so generating a random ID alone would orphan the key and break
+  // cross-device restore.
+  prefs.permanentKey = generatePermanentAccessKey();
+  prefs.userId = deriveUserIdFromAccessKey(prefs.permanentKey);
   savePrefs();
   set({ userId: prefs.userId });
 }
@@ -461,17 +537,44 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
   const space = state.spaces.find((s) => s.id === msg.spaceId);
   if (!space) return false;
 
+  // Wire encoding: the RPC rejects non-classic kinds, so location & P2P
+  // invites travel inside the legacy text/file columns (see markers above).
+  let wireKind: string = msg.kind;
+  let wireText = msg.text;
+  let wireFileName = msg.fileName;
+  let wireFileSize = msg.fileSize;
+  let wireMimeType = msg.mimeType;
+
+  if (msg.kind === "p2p_file") {
+    if (!msg.p2pTransferId) return false;
+    wireKind = "file";
+    wireText = `${P2P_MARKER}${msg.p2pTransferId}|${msg.p2pFileSize ?? 0}|${msg.p2pMimeType ?? "application/octet-stream"}`;
+    wireFileName = msg.p2pFileName ?? msg.fileName;
+    // The real byte size rides in the marker: the server caps file_size at 20MB,
+    // but P2P streams never touch server storage so any size is allowed.
+    wireFileSize = undefined;
+    wireMimeType = msg.p2pMimeType ?? msg.mimeType;
+  } else if (msg.kind === "location") {
+    if (msg.latitude === undefined || msg.longitude === undefined) return false;
+    wireKind = "text";
+    wireText = `${LOCATION_MARKER}${msg.latitude},${msg.longitude}|${msg.locationName ?? ""}`;
+  }
+
+  if (msg.threadParentId) {
+    wireText = `${wireText ?? ""}${THREAD_MARKER}${msg.threadParentId}`;
+  }
+
   try {
     const { data, error } = await supabase.rpc("send_space_message", {
       p_code: space.code,
       p_author_id: state.userId,
       p_author_name: state.displayName,
-      p_kind: msg.kind,
-      ...(msg.text !== undefined && { p_text: msg.text }),
+      p_kind: wireKind,
+      ...(wireText !== undefined && { p_text: wireText }),
       ...(msg.dataUrl !== undefined && { p_data_url: msg.dataUrl }),
-      ...(msg.fileName !== undefined && { p_file_name: msg.fileName }),
-      ...(msg.fileSize !== undefined && { p_file_size: msg.fileSize }),
-      ...(msg.mimeType !== undefined && { p_mime_type: msg.mimeType }),
+      ...(wireFileName !== undefined && { p_file_name: wireFileName }),
+      ...(wireFileSize !== undefined && { p_file_size: wireFileSize }),
+      ...(wireMimeType !== undefined && { p_mime_type: wireMimeType }),
       p_forwarded: msg.forwarded ?? false,
     });
     const row = (Array.isArray(data) ? data[0] : data) as MessageRow | null;
@@ -502,6 +605,13 @@ export async function forwardMessage(message: Message, spaceId: string) {
     ...(message.fileName !== undefined && { fileName: message.fileName }),
     ...(message.fileSize !== undefined && { fileSize: message.fileSize }),
     ...(message.mimeType !== undefined && { mimeType: message.mimeType }),
+    ...(message.latitude !== undefined && { latitude: message.latitude }),
+    ...(message.longitude !== undefined && { longitude: message.longitude }),
+    ...(message.locationName !== undefined && { locationName: message.locationName }),
+    ...(message.p2pTransferId !== undefined && { p2pTransferId: message.p2pTransferId }),
+    ...(message.p2pFileName !== undefined && { p2pFileName: message.p2pFileName }),
+    ...(message.p2pFileSize !== undefined && { p2pFileSize: message.p2pFileSize }),
+    ...(message.p2pMimeType !== undefined && { p2pMimeType: message.p2pMimeType }),
     forwarded: true,
   });
 }

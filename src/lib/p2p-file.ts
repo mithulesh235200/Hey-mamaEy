@@ -17,6 +17,8 @@ const ICE_SERVERS: RTCConfiguration = {
         "turn:openrelay.metered.ca:443",
         "turn:openrelay.metered.ca:443?transport=tcp",
         "turn:openrelay.metered.ca:3478",
+        "turn:openrelay.metered.ca:3478?transport=tcp",
+        "turns:openrelay.metered.ca:443?transport=tcp",
       ],
       username: "openrelayproject",
       credential: "openrelayproject",
@@ -412,6 +414,16 @@ export class P2PFileReceiverSession {
             });
           }
         });
+
+      // Fail fast instead of hanging on "connecting" forever when the sender
+      // is offline (app closed) or unreachable behind a strict NAT.
+      setTimeout(() => {
+        if (this.status === "connecting") {
+          this.status = "failed";
+          this.notify("Sender is offline — ask them to keep the chat open and resend the file.");
+          this.cleanup();
+        }
+      }, 45000);
     } catch (err) {
       this.status = "failed";
       this.notify(err instanceof Error ? err.message : "Failed to initialize P2P receiver");

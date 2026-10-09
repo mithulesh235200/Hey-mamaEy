@@ -18,6 +18,7 @@ import {
   joinSpace,
   leaveSpace,
   regenerateId,
+  restoreFromPermanentKey,
   setDisplayName,
   setActiveSpace,
   signInWithId,
@@ -182,6 +183,8 @@ export function Sidebar({
     const last = list[list.length - 1];
     if (!last) return "No messages yet";
     if (last.kind === "text") return last.text ?? "";
+    if (last.kind === "location") return "📍 Location shared";
+    if (last.kind === "p2p_file") return "⚡ P2P file shared";
     return `${last.kind === "file" ? "Document" : last.kind} shared`;
   };
 
@@ -335,17 +338,35 @@ export function Sidebar({
               <input
                 value={restoreId}
                 onChange={(e) => setRestoreId(e.target.value)}
-                placeholder="MAMA-0000-EYXX"
+                placeholder="MAMA-0000-EYXX or XXXX-XXXX-XXXX"
                 className="min-w-0 flex-1 rounded-lg bg-background px-2 py-1.5 font-mono text-xs outline-none ring-1 ring-input focus:ring-primary"
               />
               <button
                 type="button"
                 onClick={() => {
-                  if (!restoreId.trim()) return;
-                  signInWithId(restoreId);
-                  setRestoreId("");
-                  setShowRestore(false);
-                  toast.success("Identity restored");
+                  const value = restoreId.trim();
+                  if (!value) return;
+                  void (async () => {
+                    // Permanent keys & backup tokens restore identity + spaces;
+                    // legacy MAMA- IDs just switch the local identity.
+                    if (
+                      value.startsWith("HEYMAMA_KEY_") ||
+                      value.startsWith("HEYMAMA_BACKUP_") ||
+                      /^\d{4}-\d{4}-\d{4}$/.test(value)
+                    ) {
+                      const result = await restoreFromPermanentKey(value);
+                      toast[result.success ? "success" : "error"](
+                        result.success ? "Identity restored" : "Restore failed",
+                        { description: result.message },
+                      );
+                      if (!result.success) return;
+                    } else {
+                      signInWithId(value);
+                      toast.success("Identity restored");
+                    }
+                    setRestoreId("");
+                    setShowRestore(false);
+                  })();
                 }}
                 className="rounded-lg bg-accent px-2.5 text-xs font-semibold text-accent-foreground"
               >
