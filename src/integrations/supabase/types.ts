@@ -68,23 +68,33 @@ export type Database = {
         Row: {
           code: string;
           created_at: string;
+          expires_at: string | null;
+          has_password?: boolean;
           id: string;
+          last_activity_at: string;
           name: string;
           owner_id: string | null;
+          password_hash?: string | null;
         };
         Insert: {
           code: string;
           created_at?: string;
+          expires_at?: string | null;
           id?: string;
+          last_activity_at?: string;
           name: string;
           owner_id?: string | null;
+          password_hash?: string | null;
         };
         Update: {
           code?: string;
           created_at?: string;
+          expires_at?: string | null;
           id?: string;
+          last_activity_at?: string;
           name?: string;
           owner_id?: string | null;
+          password_hash?: string | null;
         };
         Relationships: [];
       };
@@ -104,7 +114,7 @@ export type Database = {
         }[];
       };
       get_space_messages_since: {
-        Args: { p_after: string; p_code: string };
+        Args: { p_after: string; p_code: string; p_password_hash?: string };
         Returns: {
           author_id: string;
           author_name: string;
@@ -144,7 +154,7 @@ export type Database = {
         };
       };
       create_space: {
-        Args: { p_name: string; p_owner_id: string };
+        Args: { p_name: string; p_owner_id: string; p_password_hash?: string };
         Returns: {
           code: string;
           created_at: string;
@@ -160,7 +170,7 @@ export type Database = {
         };
       };
       get_space_by_code: {
-        Args: { p_code: string };
+        Args: { p_code: string; p_password_hash?: string };
         Returns: {
           code: string;
           created_at: string;
@@ -198,7 +208,7 @@ export type Database = {
         }[];
       };
       get_space_messages: {
-        Args: { p_code: string };
+        Args: { p_code: string; p_password_hash?: string };
         Returns: {
           author_id: string;
           author_name: string;
@@ -232,6 +242,7 @@ export type Database = {
           p_forwarded?: boolean;
           p_kind: string;
           p_mime_type?: string;
+          p_password_hash?: string;
           p_text?: string;
         };
         Returns: {
@@ -255,6 +266,18 @@ export type Database = {
           isOneToOne: true;
           isSetofReturn: false;
         };
+      };
+      set_space_password: {
+        Args: { p_code: string; p_owner_id: string; p_password_hash?: string };
+        Returns: boolean;
+      };
+      cleanup_expired_chats: {
+        Args: Record<string, never>;
+        Returns: boolean;
+      };
+      generate_secure_space_code: {
+        Args: Record<string, never>;
+        Returns: string;
       };
     };
     Enums: {

@@ -69,7 +69,9 @@ export function Sidebar({
 }) {
   const chatState = useChatState();
   const [joinCode, setJoinCode] = useState("");
+  const [joinPassword, setJoinPassword] = useState("");
   const [newName, setNewName] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [restoreId, setRestoreId] = useState("");
   const [showRestore, setShowRestore] = useState(false);
   const [userStatus, setUserStatus] = useState<string>(() => {
@@ -138,11 +140,21 @@ export function Sidebar({
       toast.error("Add your name first", { description: "Your name is shown in the Space." });
       return;
     }
+    if (newPassword.trim() && newPassword.trim().length < 4) {
+      toast.error("Password too short", { description: "Room password must be 4+ characters, or empty for an open room." });
+      return;
+    }
     try {
-      const space = await createSpace(newName || `Space of ${userId.slice(0, 9)}`);
+      const space = await createSpace(newName || `Space of ${userId.slice(0, 9)}`, {
+        ...(newPassword.trim() && { password: newPassword.trim() }),
+      });
       if (!space) return;
       setNewName("");
-      toast.success(`Space created — code ${space.code}`);
+      setNewPassword("");
+      toast.success(
+        space.hasPassword ? `Private Space created — code ${space.code}` : `Space created — code ${space.code}`,
+        { description: "Text messages are end-to-end encrypted in your browser before upload." },
+      );
       onNavigate?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown Supabase error";
@@ -166,16 +178,32 @@ export function Sidebar({
       toast.error("Enter a Space Code", { description: "Type a Space Code to join." });
       return;
     }
-    const space = await joinSpace(cleanCode);
-    if (!space || !space.id || !space.code) {
+    try {
+      const space = await joinSpace(cleanCode, joinPassword);
+      if (!space || !space.id || !space.code) {
+        toast.error("Invalid Space Code", {
+          description: "No Space exists with that code. Check the code (legacy 6/8-digit or new XXXX-XXXX-XXXX token) and try again.",
+        });
+        return;
+      }
+      setJoinCode("");
+      setJoinPassword("");
+      toast.success(`Joined ${space.name}`);
+      onNavigate?.();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("SPACE_PASSWORD_REQUIRED")) {
+        toast.error("Password required", { description: "This room is password-protected — enter its password." });
+        return;
+      }
+      if (msg.includes("SPACE_PASSWORD_INVALID")) {
+        toast.error("Wrong password", { description: "The room password is incorrect." });
+        return;
+      }
       toast.error("Invalid Space Code", {
         description: "No Space exists with that code. Please check the code and try again.",
       });
-      return;
     }
-    setJoinCode("");
-    toast.success(`Joined ${space.name}`);
-    onNavigate?.();
   };
 
   const lastOf = (spaceId: string) => {
@@ -397,6 +425,16 @@ export function Sidebar({
               <Plus className="size-3.5" /> New
             </button>
           </div>
+          <input
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+            placeholder="Room password (optional, 4+ chars)"
+            type="password"
+            autoComplete="new-password"
+            maxLength={64}
+            className="mt-1.5 w-full rounded-lg bg-background px-2.5 py-2 text-xs outline-none ring-1 ring-input focus:ring-primary"
+          />
         </div>
         <div>
           <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -407,8 +445,8 @@ export function Sidebar({
               value={joinCode}
               onChange={(e) => setJoinCode(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleJoin()}
-              placeholder="5509-1234"
-              inputMode="numeric"
+              placeholder="XXXX-XXXX-XXXX"
+              autoComplete="off"
               className="min-w-0 flex-1 rounded-lg bg-background px-2.5 py-2 font-mono text-xs tracking-widest outline-none ring-1 ring-input focus:ring-accent"
             />
             <button
@@ -419,6 +457,16 @@ export function Sidebar({
               <Users className="size-3.5" /> Join
             </button>
           </div>
+          <input
+            value={joinPassword}
+            onChange={(e) => setJoinPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleJoin()}
+            placeholder="Room password (if protected)"
+            type="password"
+            autoComplete="off"
+            maxLength={64}
+            className="mt-1.5 w-full rounded-lg bg-background px-2.5 py-2 text-xs outline-none ring-1 ring-input focus:ring-accent"
+          />
         </div>
       </div>
 
@@ -463,7 +511,9 @@ export function Sidebar({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-1">
                     <p className="truncate text-xs font-semibold text-foreground">{s.name}</p>
-                    <span className="shrink-0 font-mono text-[10px] text-primary">{s.code}</span>
+                    <span className="shrink-0 font-mono text-[10px] text-primary">
+                      {s.hasPassword ? `🔒 ${s.code}` : s.code}
+                    </span>
                   </div>
                   <p className="truncate text-[11px] text-muted-foreground">{lastOf(s.id)}</p>
                 </div>

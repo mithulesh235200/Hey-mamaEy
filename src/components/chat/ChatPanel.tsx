@@ -198,6 +198,9 @@ export function ChatPanel({
   const [pinInput, setPinInput] = useState("");
   const [showPinSetup, setShowPinSetup] = useState(false);
   const [newPinInput, setNewPinInput] = useState("");
+  const [roomPasswordInput, setRoomPasswordInput] = useState("");
+  const [showRoomPasswordBox, setShowRoomPasswordBox] = useState(false);
+  const lockedCount = messages.filter((m) => m.locked).length;
 
   const [starredIds, setStarredIds] = useState<Set<string>>(() => {
     try {
@@ -1089,6 +1092,20 @@ export function ChatPanel({
               <span className="shrink-0 whitespace-nowrap font-mono font-semibold text-primary">
                 Code: {space.code}
               </span>
+              <span
+                title="Text messages are encrypted in your browser (AES-GCM) before upload; the database only stores ciphertext."
+                className="shrink-0 whitespace-nowrap rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-400"
+              >
+                🔒 E2E
+              </span>
+              {space.hasPassword && (
+                <span
+                  title="This room is password-protected."
+                  className="shrink-0 whitespace-nowrap rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400"
+                >
+                  🔑 Protected
+                </span>
+              )}
               <span className="hidden min-w-0 items-center gap-1 truncate md:flex">
                 <span className="size-1.5 rounded-full bg-emerald-400" />
                 <span className="truncate">
@@ -1376,6 +1393,93 @@ export function ChatPanel({
           </div>
         )}
       </header>
+
+      {lockedCount > 0 && (
+        <div className="flex flex-col gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs">
+          <p className="text-amber-300">
+            🔒 {lockedCount} message{lockedCount === 1 ? "" : "s"} couldn't be decrypted. Enter the
+            room password to unlock.
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={roomPasswordInput}
+              onChange={(e) => setRoomPasswordInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  void (async () => {
+                    const { unlockSpaceMessages } = await import("@/lib/heymama");
+                    await unlockSpaceMessages(space.code, roomPasswordInput);
+                    setRoomPasswordInput("");
+                    toast.success("Room password applied — messages re-decrypted");
+                  })();
+                }
+              }}
+              placeholder="Room password"
+              autoComplete="off"
+              className="min-w-0 flex-1 rounded-lg bg-background px-2.5 py-1.5 outline-none ring-1 ring-input focus:ring-primary"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                void (async () => {
+                  const { unlockSpaceMessages } = await import("@/lib/heymama");
+                  await unlockSpaceMessages(space.code, roomPasswordInput);
+                  setRoomPasswordInput("");
+                  toast.success("Room password applied — messages re-decrypted");
+                })();
+              }}
+              className="rounded-lg bg-primary px-3 py-1.5 font-semibold text-primary-foreground"
+            >
+              Unlock
+            </button>
+          </div>
+        </div>
+      )}
+
+      {space.ownerId === userId && (
+        <div className="flex items-center gap-2 border-b border-border bg-background/60 px-4 py-1.5 text-[11px]">
+          <button
+            type="button"
+            onClick={() => setShowRoomPasswordBox((v) => !v)}
+            className="text-muted-foreground underline-offset-2 hover:text-primary hover:underline"
+          >
+            {space.hasPassword ? "Change room password" : "Add room password (optional)"}
+          </button>
+          {showRoomPasswordBox && (
+            <span className="flex min-w-0 flex-1 items-center gap-1.5">
+              <input
+                type="password"
+                value={roomPasswordInput}
+                onChange={(e) => setRoomPasswordInput(e.target.value)}
+                placeholder="4+ chars, empty removes"
+                autoComplete="new-password"
+                maxLength={64}
+                className="min-w-0 flex-1 rounded-lg bg-card px-2 py-1 outline-none ring-1 ring-input focus:ring-primary"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  void (async () => {
+                    const { setSpacePassword } = await import("@/lib/heymama");
+                    const ok = await setSpacePassword(space.id, roomPasswordInput);
+                    toast[ok ? "success" : "error"](
+                      ok ? "Room password updated" : "Couldn't update password",
+                    );
+                    if (ok) {
+                      setRoomPasswordInput("");
+                      setShowRoomPasswordBox(false);
+                    }
+                  })();
+                }}
+                className="rounded-lg bg-primary px-2 py-1 font-semibold text-primary-foreground"
+              >
+                Save
+              </button>
+            </span>
+          )}
+        </div>
+      )}
 
       {pinnedMessage && (
         <div className="flex items-center justify-between border-b border-border bg-secondary/80 px-4 py-2 text-xs backdrop-blur-md animate-in slide-in-from-top-2 duration-150">

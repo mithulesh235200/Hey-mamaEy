@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { clearRoomPassword } from "./roomCrypto";
 
 export type MediaKind = "text" | "image" | "video" | "audio" | "file" | "location" | "p2p_file";
 
@@ -27,6 +28,8 @@ export type Message = {
   p2pFileSize?: number;
   p2pMimeType?: string;
   createdAt: number;
+  /** True when the payload is E2E-encrypted but could not be decrypted (missing/wrong room password). */
+  locked?: boolean;
 };
 
 export type Space = {
@@ -35,6 +38,8 @@ export type Space = {
   code: string;
   createdAt: number;
   ownerId?: string | null;
+  hasPassword?: boolean;
+  expiresAt?: number | null;
 };
 
 export type State = {
@@ -60,7 +65,9 @@ const alnum = (n: number) => {
 
 export const generateUserId = () => `MAMA-${rand(4)}-EY${alnum(2)}`;
 
-export const generateSpaceCode = () => `${rand(4)}-${rand(4)}`;
+// Long alphanumeric room tokens (XXXX-XXXX-XXXX). Legacy numeric codes stay joinable.
+export { generateSecureSpaceCode as generateSpaceCode } from "./spaceCode";
+export { normalizeSpaceCode, isValidSpaceCode } from "./spaceCode";
 
 /* ---------- store ---------- */
 
@@ -174,6 +181,8 @@ type SpaceRow = {
   code: string;
   created_at: string;
   owner_id?: string | null;
+  has_password?: boolean | null;
+  expires_at?: string | null;
 };
 type MessageRow = {
   id: string;
@@ -197,6 +206,10 @@ const toSpace = (r: SpaceRow): Space => ({
   code: r.code,
   createdAt: new Date(r.created_at).getTime(),
   ...(r.owner_id !== undefined && { ownerId: r.owner_id }),
+  ...(r.has_password !== undefined && { hasPassword: Boolean(r.has_password) }),
+  ...(r.expires_at !== undefined && {
+    expiresAt: r.expires_at ? new Date(r.expires_at).getTime() : null,
+  }),
 });
 
 const toMessage = (r: MessageRow): Message => {
@@ -283,26 +296,76 @@ const toMessage = (r: MessageRow): Message => {
 const POLL_MS = 10000;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-async function fetchSpace(code: string) {
+async function passwordHashFor(code: string, password: string): Promise<string | null> {
+  const pw = (password ?? "").trim();
+  if (!pw) return null;
+  const { hashRoomPassword } = await import("./roomCrypto");
+  return hashRoomPassword(pw);
+}
+
+async function fetchSpace(code: string, password = ""): Promise<Space | null> {
   try {
+    const p_password_hash = await passwordHashFor(code, password);
     const { data, error } = await supabase.rpc("get_space_by_code", {
       p_code: code,
+      ...(p_password_hash !== null && { p_password_hash }),
     });
-    if (error) return null;
+    if (error) {
+      const msg = error.message ?? "";
+      if (msg.includes("SPACE_PASSWORD_REQUIRED")) throw new Error("SPACE_PASSWORD_REQUIRED");
+      if (msg.includes("SPACE_PASSWORD_INVALID")) throw new Error("SPACE_PASSWORD_INVALID");
+      return null;
+    }
     const row = (Array.isArray(data) ? data[0] : data) as SpaceRow | null;
     if (!row || !row.id || !row.code) return null;
     return toSpace(row);
-  } catch {
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith("SPACE_PASSWORD_")) throw e;
     return null;
+  }
+}
+
+async function decryptIfNeeded(msg: Message, code: string): Promise<Message> {
+  if (!msg.text || !msg.text.startsWith("__enc1__.")) return msg;
+  try {
+    const { decryptRoomText, getRoomPassword } = await import("./roomCrypto");
+    const plain = await decryptRoomText(msg.text, code, getRoomPassword(code));
+    if (plain === null) {
+      return { ...msg, text: "🔒 Encrypted message — enter the Space password to decrypt.", locked: true };
+    }
+    // Re-run wire decoding on the decrypted payload (thread/location markers).
+    const decoded = toMessage({
+      id: msg.id,
+      space_id: msg.spaceId,
+      author_id: msg.authorId,
+      author_name: msg.authorName,
+      kind: msg.kind === "p2p_file" || msg.kind === "location" ? "text" : msg.kind,
+      text: plain,
+      data_url: msg.dataUrl ?? null,
+      file_name: msg.fileName ?? null,
+      file_size: msg.fileSize ?? null,
+      mime_type: msg.mimeType ?? null,
+      forwarded: msg.forwarded ?? false,
+      created_at: new Date(msg.createdAt).toISOString(),
+    } as MessageRow);
+    return { ...decoded, id: msg.id, spaceId: msg.spaceId, createdAt: msg.createdAt };
+  } catch {
+    return { ...msg, text: "🔒 Encrypted message — unavailable.", locked: true };
   }
 }
 
 async function fetchMessages(code: string): Promise<Message[]> {
   try {
+    const { getRoomPassword, hashRoomPassword } = await import("./roomCrypto");
+    const pw = getRoomPassword(code);
+    const p_password_hash = pw.trim() ? await hashRoomPassword(pw) : null;
     const { data, error } = await supabase.rpc("get_space_messages", {
       p_code: code,
+      ...(p_password_hash !== null && { p_password_hash }),
     });
-    return error ? [] : ((data ?? []) as MessageRow[]).map(toMessage);
+    if (error) return [];
+    const rows = ((data ?? []) as MessageRow[]).map(toMessage);
+    return await Promise.all(rows.map((m) => decryptIfNeeded(m, code)));
   } catch {
     return [];
   }
@@ -389,7 +452,22 @@ async function loadSpaces() {
   }
 
   try {
-    const results = await Promise.all(prefs.codes.map(fetchSpace));
+    // Best-effort server TTL sweep (also enforced inside every read RPC + nightly pg_cron).
+    void supabase.rpc("cleanup_expired_chats").then(
+      () => undefined,
+      () => undefined,
+    );
+    const { getRoomPassword } = await import("./roomCrypto");
+    const results = await Promise.all(
+      prefs.codes.map(async (code) => {
+        try {
+          return await fetchSpace(code, getRoomPassword(code));
+        } catch {
+          // Password-gated or expired rooms stay listed locally; user can unlock or leave.
+          return null;
+        }
+      }),
+    );
     const spaces = results.filter(
       (s): s is Space => s !== null && Boolean(s.id) && Boolean(s.code),
     );
@@ -508,38 +586,59 @@ function rememberCode(code: string) {
   }
 }
 
-export async function createSpace(name: string): Promise<Space | null> {
+export async function createSpace(
+  name: string,
+  opts?: { password?: string },
+): Promise<Space | null> {
+  const password = (opts?.password ?? "").trim();
+  if (password && password.length < 4) throw new Error("Room password must be at least 4 characters.");
+  const p_password_hash = password ? await (await import("./roomCrypto")).hashRoomPassword(password) : null;
   const { data, error } = await supabase.rpc("create_space", {
     p_name: name.trim() || "New Space",
     p_owner_id: state.userId,
+    ...(p_password_hash !== null && { p_password_hash }),
   });
   const row = (Array.isArray(data) ? data[0] : data) as SpaceRow | null;
   if (error) throw new Error(error.message);
   if (!row) throw new Error("The Space service returned no Space.");
 
   const space = toSpace(row);
+  if (password) {
+    const { setRoomPassword } = await import("./roomCrypto");
+    setRoomPassword(space.code, password);
+    space.hasPassword = true;
+  }
   rememberCode(space.code);
   void registerMembership(space.code, state.userId);
+  // Best-effort server-side TTL sweep (also runs on reads + nightly pg_cron).
+  void supabase.rpc("cleanup_expired_chats").then(
+    () => undefined,
+    () => undefined,
+  );
   set({ spaces: [space, ...state.spaces], activeSpaceId: space.id });
   return space;
 }
 
-export async function joinSpace(rawCode: string): Promise<Space | null> {
-  const digits = rawCode.replace(/[^0-9]/g, "");
-  // Legacy 6-digit spaces remain joinable; all new spaces use 8 digits.
-  if (digits.length !== 6 && digits.length !== 8) return null;
-  const splitAt = digits.length === 8 ? 4 : 3;
-  const formatted = `${digits.slice(0, splitAt)}-${digits.slice(splitAt)}`;
+export async function joinSpace(rawCode: string, password = ""): Promise<Space | null> {
+  const { normalizeSpaceCode } = await import("./spaceCode");
+  const { setRoomPassword } = await import("./roomCrypto");
+  const formatted = normalizeSpaceCode(rawCode);
+  // Unknown shape: not a legacy numeric code and not a new token.
+  if (!formatted) return null;
 
   const local = state.spaces.find((s) => s.code === formatted);
   if (local) {
+    if (password.trim()) setRoomPassword(local.code, password.trim());
     set({ activeSpaceId: local.id });
     void registerMembership(local.code, state.userId);
+    // Re-decrypt history now that a password may have been supplied.
+    void refreshActiveSpace();
     return local;
   }
 
-  const space = await fetchSpace(formatted);
+  const space = await fetchSpace(formatted, password.trim());
   if (!space || !space.id || !space.code) return null;
+  if (password.trim()) setRoomPassword(space.code, password.trim());
   rememberCode(space.code);
   void registerMembership(space.code, state.userId);
 
@@ -554,11 +653,46 @@ export async function joinSpace(rawCode: string): Promise<Space | null> {
   return space;
 }
 
+/** Owner-only: set/change/remove the room password (empty removes). */
+export async function setSpacePassword(spaceId: string, password: string): Promise<boolean> {
+  const space = state.spaces.find((s) => s.id === spaceId);
+  if (!space || space.ownerId !== state.userId) return false;
+  const pw = password.trim();
+  const { hashRoomPassword, setRoomPassword } = await import("./roomCrypto");
+  const p_password_hash = pw ? await hashRoomPassword(pw) : null;
+  const { data, error } = await supabase.rpc("set_space_password", {
+    p_code: space.code,
+    p_owner_id: state.userId,
+    ...(p_password_hash !== null && { p_password_hash }),
+  });
+  if (error || data !== true) return false;
+  setRoomPassword(space.code, pw);
+  set({ spaces: state.spaces.map((s) => (s.id === spaceId ? { ...s, hasPassword: Boolean(pw) } : s)) });
+  return true;
+}
+
+/** Retry decryption for a room after the user supplies its password. */
+export async function unlockSpaceMessages(code: string, password: string): Promise<void> {
+  const { setRoomPassword } = await import("./roomCrypto");
+  setRoomPassword(code, password.trim());
+  const space = state.spaces.find((s) => s.code === code);
+  if (!space) return;
+  const fresh = await fetchMessages(code);
+  set({
+    messages: [...state.messages.filter((m) => m.spaceId !== space.id), ...fresh],
+  });
+}
+
 export function leaveSpace(spaceId: string): boolean {
   const space = state.spaces.find((s) => s.id === spaceId);
   if (space) {
     prefs.codes = prefs.codes.filter((c) => c !== space.code);
     savePrefs();
+    try {
+      clearRoomPassword(space.code);
+    } catch {
+      /* ignore */
+    }
   }
   set({
     spaces: state.spaces.filter((s) => s.id !== spaceId),
@@ -615,7 +749,22 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
     wireText = `${wireText ?? ""}${THREAD_MARKER}${msg.threadParentId}`;
   }
 
+  // Client-side encryption: text payloads are AES-GCM sealed with the room
+  // key BEFORE they hit Supabase, so the DB only ever sees ciphertext.
+  // Binary attachments (dataUrl) stay as-is in v1 and are covered by transport TLS.
   try {
+    if (wireText !== undefined && wireKind === "text") {
+      const { encryptRoomText, getRoomPassword } = await import("./roomCrypto");
+      wireText = await encryptRoomText(wireText, space.code, getRoomPassword(space.code));
+    }
+  } catch {
+    return false;
+  }
+
+  try {
+    const { getRoomPassword, hashRoomPassword } = await import("./roomCrypto");
+    const pw = getRoomPassword(space.code);
+    const p_password_hash = pw.trim() ? await hashRoomPassword(pw) : null;
     const { data, error } = await supabase.rpc("send_space_message", {
       p_code: space.code,
       p_author_id: state.userId,
@@ -627,11 +776,12 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
       ...(wireFileSize !== undefined && { p_file_size: wireFileSize }),
       ...(wireMimeType !== undefined && { p_mime_type: wireMimeType }),
       p_forwarded: msg.forwarded ?? false,
+      ...(p_password_hash !== null && { p_password_hash }),
     });
     const row = (Array.isArray(data) ? data[0] : data) as MessageRow | null;
     if (error || !row) return false;
 
-    const saved = toMessage(row);
+    const saved = await decryptIfNeeded(toMessage(row), space.code);
     if (!state.messages.some((m) => m.id === saved.id)) {
       set({ messages: [...state.messages, saved] });
     }
@@ -648,6 +798,9 @@ export async function sendMessage(
 }
 
 export async function forwardMessage(message: Message, spaceId: string) {
+  if (message.locked) return false;
+  // Never forward raw ciphertext: only decrypted plaintext is re-encrypted for the target room.
+  if (message.text?.startsWith("__enc1__.")) return false;
   return insertMessage({
     spaceId,
     kind: message.kind,
@@ -670,16 +823,23 @@ export async function forwardMessage(message: Message, spaceId: string) {
 export async function editMessage(messageId: string, spaceId: string, text: string) {
   const space = state.spaces.find((item) => item.id === spaceId);
   if (!space) return null;
+  let wireText = text.trim();
+  try {
+    const { encryptRoomText, getRoomPassword } = await import("./roomCrypto");
+    wireText = await encryptRoomText(wireText, space.code, getRoomPassword(space.code));
+  } catch {
+    return null;
+  }
   const { data, error } = await supabase.rpc("edit_space_message", {
     p_code: space.code,
     p_message_id: messageId,
     p_author_id: state.userId,
-    p_text: text.trim(),
+    p_text: wireText,
   });
   if (error) return null;
   const row = (Array.isArray(data) ? data[0] : data) as MessageRow | null;
   if (!row) return null;
-  const edited = toMessage(row);
+  const edited = await decryptIfNeeded(toMessage(row), space.code);
   set({ messages: state.messages.map((item) => (item.id === edited.id ? edited : item)) });
   return edited;
 }

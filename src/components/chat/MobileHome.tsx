@@ -56,7 +56,9 @@ export function MobileHome({
 }: MobileHomeProps) {
   const [editingName, setEditingName] = useState(displayName === "You" ? "" : displayName);
   const [spaceName, setSpaceName] = useState("");
+  const [spacePassword, setSpacePassword] = useState("");
   const [joinCode, setJoinCode] = useState("");
+  const [joinPassword, setJoinPassword] = useState("");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<"create" | "join" | null>(null);
 
@@ -90,10 +92,17 @@ export function MobileHome({
 
   const handleCreate = async () => {
     if ((!displayName || displayName === "You") && !saveName()) return;
+    if (spacePassword.trim() && spacePassword.trim().length < 4) {
+      toast.error("Password too short", { description: "Use 4+ characters or leave it empty." });
+      return;
+    }
     setBusy("create");
     try {
-      await createSpace(spaceName.trim() || `Space of ${userId.slice(0, 9)}`);
+      await createSpace(spaceName.trim() || `Space of ${userId.slice(0, 9)}`, {
+        ...(spacePassword.trim() && { password: spacePassword.trim() }),
+      });
       setSpaceName("");
+      setSpacePassword("");
       toast.success("Space created");
       onClose?.();
     } catch (error) {
@@ -107,16 +116,15 @@ export function MobileHome({
   const handleJoin = async () => {
     if ((!displayName || displayName === "You") && !saveName()) return;
     const cleanCode = joinCode.trim();
-    const digits = cleanCode.replace(/\D/g, "");
-    if (!cleanCode || (digits.length !== 6 && digits.length !== 8)) {
+    if (!cleanCode) {
       toast.error("Invalid Space Code", {
-        description: "Space code must be a valid 6 or 8 digit number.",
+        description: "Enter a room token (legacy 6/8-digit or new XXXX-XXXX-XXXX).",
       });
       return;
     }
     setBusy("join");
     try {
-      const space = await joinSpace(cleanCode);
+      const space = await joinSpace(cleanCode, joinPassword);
       if (!space || !space.id || !space.code) {
         toast.error("Invalid Space Code", {
           description: "No Space exists with that code. Please check the code and try again.",
@@ -125,12 +133,20 @@ export function MobileHome({
       }
       markSpaceAsRead(space.id);
       setJoinCode("");
+      setJoinPassword("");
       toast.success(`Joined ${space.name}`);
       onClose?.();
-    } catch {
-      toast.error("Couldn’t join the Space", {
-        description: "Check your connection and try again.",
-      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("SPACE_PASSWORD_REQUIRED")) {
+        toast.error("Password required", { description: "This room needs its password." });
+      } else if (msg.includes("SPACE_PASSWORD_INVALID")) {
+        toast.error("Wrong password", { description: "The room password is incorrect." });
+      } else {
+        toast.error("Couldn’t join the Space", {
+          description: "Check your connection and try again.",
+        });
+      }
     } finally {
       setBusy(null);
     }
@@ -262,6 +278,15 @@ export function MobileHome({
                     {busy === "create" ? "Creating…" : "Create"}
                   </button>
                 </div>
+                <input
+                  value={spacePassword}
+                  onChange={(event) => setSpacePassword(event.target.value)}
+                  placeholder="Room password (optional, 4+ chars)"
+                  type="password"
+                  autoComplete="new-password"
+                  maxLength={64}
+                  className="mobile-input mt-2"
+                />
               </div>
 
               <div className="mobile-form-card">
@@ -274,8 +299,7 @@ export function MobileHome({
                     value={joinCode}
                     onChange={(event) => setJoinCode(event.target.value)}
                     onKeyDown={(event) => event.key === "Enter" && void handleJoin()}
-                    placeholder="Enter the space code"
-                    inputMode="numeric"
+                    placeholder="XXXX-XXXX-XXXX"
                     autoComplete="off"
                     className="mobile-input font-mono tracking-wider"
                   />
@@ -288,6 +312,15 @@ export function MobileHome({
                     {busy === "join" ? "Joining…" : "Join"}
                   </button>
                 </div>
+                <input
+                  value={joinPassword}
+                  onChange={(event) => setJoinPassword(event.target.value)}
+                  placeholder="Room password (if protected)"
+                  type="password"
+                  autoComplete="off"
+                  maxLength={64}
+                  className="mobile-input mt-2"
+                />
               </div>
             </section>
 
@@ -333,7 +366,7 @@ export function MobileHome({
                           <span className="flex items-center gap-2">
                             <span className="truncate text-sm font-semibold">{space.name}</span>
                             <span className="shrink-0 text-[11px] font-mono text-primary">
-                              {space.code}
+                              {space.hasPassword ? `🔒 ${space.code}` : space.code}
                             </span>
                           </span>
                           <span className="mt-1 block truncate text-xs text-muted-foreground">
