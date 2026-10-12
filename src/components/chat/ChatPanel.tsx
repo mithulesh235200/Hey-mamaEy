@@ -1088,22 +1088,26 @@ export function ChatPanel({
           </button>
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-sm font-bold text-foreground">{space.name}</h2>
-            <div className="flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
-              <span className="shrink-0 whitespace-nowrap font-mono font-semibold text-primary">
-                Code: {space.code}
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+              <span className="whitespace-nowrap font-mono font-semibold text-primary">
+                <span className="hidden min-[400px]:inline">Code: </span>
+                {space.code}
               </span>
               <span
                 title="Text messages are encrypted in your browser (AES-GCM) before upload; the database only stores ciphertext."
-                className="shrink-0 whitespace-nowrap rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-400"
+                className="whitespace-nowrap rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-400"
               >
                 🔒 E2E
               </span>
               {space.hasPassword && (
                 <span
                   title="This room is password-protected."
-                  className="shrink-0 whitespace-nowrap rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400"
+                  className="whitespace-nowrap rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400"
                 >
-                  🔑 Protected
+                  <span className="hidden min-[400px]:inline">🔑 Protected</span>
+                  <span className="min-[400px]:hidden" aria-label="Protected">
+                    🔑
+                  </span>
                 </span>
               )}
               <span className="hidden min-w-0 items-center gap-1 truncate md:flex">
@@ -1173,7 +1177,7 @@ export function ChatPanel({
         </div>
 
         <div
-          className={`${showMobileActions ? "grid grid-cols-5" : "hidden"} mt-3 gap-2 rounded-2xl border border-border bg-background/50 p-2 md:mt-0 md:flex md:flex-nowrap md:gap-1 md:overflow-x-auto md:rounded-none md:border-0 md:bg-transparent md:p-0`}
+          className={`${showMobileActions ? "grid grid-cols-5" : "hidden"} mt-3 gap-2 rounded-2xl border border-border bg-background/50 p-2 md:mt-0 md:flex md:flex-wrap md:gap-1 md:rounded-none md:border-0 md:bg-transparent md:p-0`}
         >
           <button
             type="button"
