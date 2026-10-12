@@ -586,17 +586,21 @@ function rememberCode(code: string) {
   }
 }
 
+export type RoomMode = "quick" | "private";
+
 export async function createSpace(
   name: string,
-  opts?: { password?: string },
+  opts?: { password?: string; mode?: RoomMode },
 ): Promise<Space | null> {
   const password = (opts?.password ?? "").trim();
+  const mode: RoomMode = opts?.mode === "quick" ? "quick" : "private";
   if (password && password.length < 4) throw new Error("Room password must be at least 4 characters.");
   const p_password_hash = password ? await (await import("./roomCrypto")).hashRoomPassword(password) : null;
   const { data, error } = await supabase.rpc("create_space", {
     p_name: name.trim() || "New Space",
     p_owner_id: state.userId,
     ...(p_password_hash !== null && { p_password_hash }),
+    p_mode: mode,
   });
   const row = (Array.isArray(data) ? data[0] : data) as SpaceRow | null;
   if (error) throw new Error(error.message);

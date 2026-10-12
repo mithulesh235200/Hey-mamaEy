@@ -154,7 +154,7 @@ export type Database = {
         };
       };
       create_space: {
-        Args: { p_name: string; p_owner_id: string; p_password_hash?: string };
+        Args: { p_name: string; p_owner_id: string; p_password_hash?: string; p_mode?: string };
         Returns: {
           code: string;
           created_at: string;

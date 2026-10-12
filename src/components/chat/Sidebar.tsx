@@ -72,6 +72,7 @@ export function Sidebar({
   const [joinPassword, setJoinPassword] = useState("");
   const [newName, setNewName] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [newMode, setNewMode] = useState<"quick" | "private">("private");
   const [restoreId, setRestoreId] = useState("");
   const [showRestore, setShowRestore] = useState(false);
   const [userStatus, setUserStatus] = useState<string>(() => {
@@ -147,13 +148,19 @@ export function Sidebar({
     try {
       const space = await createSpace(newName || `Space of ${userId.slice(0, 9)}`, {
         ...(newPassword.trim() && { password: newPassword.trim() }),
+        mode: newMode,
       });
       if (!space) return;
       setNewName("");
       setNewPassword("");
       toast.success(
-        space.hasPassword ? `Private Space created — code ${space.code}` : `Space created — code ${space.code}`,
-        { description: "Text messages are end-to-end encrypted in your browser before upload." },
+        newMode === "quick" ? `Quick Space created — code ${space.code}` : `Private Space created — code ${space.code}`,
+        {
+          description:
+            newMode === "quick"
+              ? "8-digit code: fast to share, easier to guess. Add a password for extra safety."
+              : "Text messages are end-to-end encrypted in your browser before upload.",
+        },
       );
       onNavigate?.();
     } catch (error) {
@@ -410,6 +417,34 @@ export function Sidebar({
           <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
             Create a Space
           </label>
+          <div className="mt-1.5 grid grid-cols-2 gap-1 rounded-lg bg-background p-1 ring-1 ring-input">
+            <button
+              type="button"
+              onClick={() => setNewMode("quick")}
+              title="8-digit numeric code — fast to dictate and type, easier to guess"
+              className={
+                "rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors " +
+                (newMode === "quick"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground")
+              }
+            >
+              ⚡ Quick <span className="font-normal opacity-75">8-digit</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setNewMode("private")}
+              title="12-char token + E2E encryption — best for private chats"
+              className={
+                "rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors " +
+                (newMode === "private"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground")
+              }
+            >
+              🔒 Private <span className="font-normal opacity-75">secure</span>
+            </button>
+          </div>
           <div className="mt-1.5 flex gap-2">
             <input
               value={newName}
@@ -445,7 +480,7 @@ export function Sidebar({
               value={joinCode}
               onChange={(e) => setJoinCode(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleJoin()}
-              placeholder="XXXX-XXXX-XXXX"
+              placeholder="8-digit or XXXX-XXXX-XXXX"
               autoComplete="off"
               className="min-w-0 flex-1 rounded-lg bg-background px-2.5 py-2 font-mono text-xs tracking-widest outline-none ring-1 ring-input focus:ring-accent"
             />

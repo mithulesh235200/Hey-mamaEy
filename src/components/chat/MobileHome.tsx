@@ -57,6 +57,7 @@ export function MobileHome({
   const [editingName, setEditingName] = useState(displayName === "You" ? "" : displayName);
   const [spaceName, setSpaceName] = useState("");
   const [spacePassword, setSpacePassword] = useState("");
+  const [spaceMode, setSpaceMode] = useState<"quick" | "private">("private");
   const [joinCode, setJoinCode] = useState("");
   const [joinPassword, setJoinPassword] = useState("");
   const [query, setQuery] = useState("");
@@ -100,10 +101,11 @@ export function MobileHome({
     try {
       await createSpace(spaceName.trim() || `Space of ${userId.slice(0, 9)}`, {
         ...(spacePassword.trim() && { password: spacePassword.trim() }),
+        mode: spaceMode,
       });
       setSpaceName("");
       setSpacePassword("");
-      toast.success("Space created");
+      toast.success(spaceMode === "quick" ? "Quick Space created" : "Private Space created");
       onClose?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Please try again.";
@@ -259,6 +261,22 @@ export function MobileHome({
                 <label htmlFor="mobile-space-name" className="mobile-field-label">
                   Create a space
                 </label>
+                <div className="mb-2 grid grid-cols-2 gap-1 rounded-lg bg-background p-1 ring-1 ring-input">
+                  <button
+                    type="button"
+                    onClick={() => setSpaceMode("quick")}
+                    className={`rounded-md px-2 py-1.5 text-[11px] font-semibold ${spaceMode === "quick" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+                  >
+                    ⚡ Quick 8-digit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSpaceMode("private")}
+                    className={`rounded-md px-2 py-1.5 text-[11px] font-semibold ${spaceMode === "private" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+                  >
+                    🔒 Private secure
+                  </button>
+                </div>
                 <div className="mobile-field-row">
                   <input
                     id="mobile-space-name"
