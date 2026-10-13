@@ -74,6 +74,28 @@ function triggerBlobDownload(blob: Blob, fileName: string): void {
 }
 
 /**
+ * True only on phones / Capacitor native app. Desktop browsers (Windows,
+ * macOS, Linux — like the screenshot's Windows Share sheet) must NEVER use
+ * navigator.share: it pops a share dialog instead of saving to Downloads.
+ */
+function shouldUseShareSheet(): boolean {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  try {
+    const ua = navigator.userAgent || "";
+    // Capacitor native app (Android WebView) — UA can look desktop-ish.
+    const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })
+      ?.Capacitor;
+    if (typeof cap?.isNativePlatform === "function" && cap.isNativePlatform()) return true;
+    // Real mobile devices only.
+    if (/Android|iPhone|iPad|iPod/i.test(ua)) return true;
+    if (navigator.maxTouchPoints > 2 && /Mobile/i.test(ua)) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/**
  * Saves a remote (Supabase Storage) or inline data: URL to the device's
  * local storage (Downloads folder on desktop, Downloads/Gallery on phones).
  *
@@ -82,9 +104,9 @@ function triggerBlobDownload(blob: Blob, fileName: string): void {
  * different origin and just navigate/open the Supabase URL. Fetching the
  * bytes first and downloading a same-origin blob URL forces a real save.
  *
- * Works on desktop + mobile browsers with zero native plugins. On Capacitor
- * / mobile WebViews it first tries the Web Share sheet (Save to Files /
- * Photos), then falls back to the blob-anchor download.
+ * Works on desktop + mobile browsers with zero native plugins. Desktop
+ * always uses a direct blob download (saves to Downloads). Only phones /
+ * the Capacitor native app use the Web Share sheet (Save to Files/Photos).
  */
 export async function saveAttachmentToDevice(
   url: string,
@@ -120,32 +142,36 @@ export async function saveAttachmentToDevice(
     if (!res.ok) throw new Error(`Download failed (HTTP ${res.status})`);
     const blob = await res.blob();
 
-    // On phones (Capacitor or mobile browser), prefer the system share
-    // sheet so the user can explicitly "Save to Files / Photos".
-    try {
-      const nav = navigator as Navigator & {
-        canShare?: (data: { files?: File[] }) => boolean;
-        share?: (data: { files?: File[]; title?: string }) => Promise<void>;
-      };
-      const file = new File([blob], safeName, {
-        type: blob.type || "application/octet-stream",
-      });
-      if (typeof nav.canShare === "function" && typeof nav.share === "function") {
-        try {
-          if (nav.canShare({ files: [file] })) {
-            await nav.share({ files: [file], title: safeName });
-            return { ok: true, shared: true };
+    // On phones only, prefer the system share sheet so the user can
+    // explicitly "Save to Files / Photos". Desktop skips this entirely —
+    // navigator.share on Windows opens a Share dialog (your screenshot)
+    // instead of saving to Downloads.
+    if (shouldUseShareSheet()) {
+      try {
+        const nav = navigator as Navigator & {
+          canShare?: (data: { files?: File[] }) => boolean;
+          share?: (data: { files?: File[]; title?: string }) => Promise<void>;
+        };
+        const file = new File([blob], safeName, {
+          type: blob.type || "application/octet-stream",
+        });
+        if (typeof nav.canShare === "function" && typeof nav.share === "function") {
+          try {
+            if (nav.canShare({ files: [file] })) {
+              await nav.share({ files: [file], title: safeName });
+              return { ok: true, shared: true };
+            }
+          } catch (shareErr) {
+            // User dismissed the sheet = treat as done, don't error out.
+            if (shareErr instanceof DOMException && shareErr.name === "AbortError") {
+              return { ok: true, shared: true };
+            }
+            // Otherwise fall through to the anchor download below.
           }
-        } catch (shareErr) {
-          // User dismissed the sheet = treat as done, don't error out.
-          if (shareErr instanceof DOMException && shareErr.name === "AbortError") {
-            return { ok: true, shared: true };
-          }
-          // Otherwise fall through to the anchor download below.
         }
+      } catch {
+        /* share sheet unavailable — use anchor download */
       }
-    } catch {
-      /* share sheet unavailable — use anchor download */
     }
 
     triggerBlobDownload(blob, safeName);
