@@ -6,7 +6,14 @@ import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import { MobileHome, type MobileTab } from "@/components/chat/MobileHome";
 import { Sidebar } from "@/components/chat/Sidebar";
-import { hydrate, joinSpace, markSpaceAsRead, useChatState, type Message } from "@/lib/heymama";
+import {
+  hydrate,
+  joinSpace,
+  markSpaceAsRead,
+  useChatState,
+  withoutHidden,
+  type Message,
+} from "@/lib/heymama";
 import { flushPushToken, initPushNotifications } from "@/lib/push";
 
 const ChatPanel = lazy(() =>
@@ -59,8 +66,10 @@ function Index() {
     settingsOpen: false,
   });
   const activeSpace = state.spaces.find((s) => s.id === state.activeSpaceId) ?? null;
+  // Messages the user deleted for themselves never render anywhere.
+  const visibleMessages = withoutHidden(state.messages, state.hiddenMessageIds);
   const activeMessages = activeSpace
-    ? state.messages.filter((m) => m.spaceId === activeSpace.id)
+    ? visibleMessages.filter((m) => m.spaceId === activeSpace.id)
     : [];
 
   backState.current = {
@@ -221,7 +230,7 @@ function Index() {
           displayName={state.displayName}
           spaces={state.spaces}
           activeSpaceId={state.activeSpaceId}
-          messages={state.messages}
+          messages={visibleMessages}
           onOpenSettings={() => setSettingsOpen(true)}
         />
       </div>
@@ -259,7 +268,7 @@ function Index() {
             userId={state.userId}
             displayName={state.displayName}
             spaces={state.spaces}
-            messages={state.messages}
+            messages={visibleMessages}
             activeSpaceId={state.activeSpaceId}
             readTimestamps={state.readTimestamps}
             showBottomNav={mobileQuickBar}

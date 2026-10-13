@@ -50,11 +50,13 @@ export type State = {
   activeSpaceId: string | null;
   typingMap: Record<string, Record<string, string>>; // spaceId -> { userId: userName }
   readTimestamps: Record<string, number>; // spaceId -> lastReadTime
+  hiddenMessageIds: string[]; // message IDs the user deleted for themselves only
   ready: boolean;
 };
 
 const PREFS_KEY = "heymamaey.prefs.v2";
 const READ_KEY = "heymamaey.readTimestamps.v1";
+const HIDDEN_KEY = "heymamaey.hiddenForMe.v1";
 
 const rand = (n: number) =>
   Array.from({ length: n }, () => Math.floor(Math.random() * 10)).join("");
@@ -81,6 +83,7 @@ const initialState: State = {
   activeSpaceId: null,
   typingMap: {},
   readTimestamps: {},
+  hiddenMessageIds: [],
   ready: false,
 };
 
@@ -199,6 +202,52 @@ function saveReadTimestamps(next: Record<string, number>) {
   } catch {
     /* ignore storage-denied contexts */
   }
+}
+
+/* ---------- delete-for-me (local hide, works for any message) ---------- */
+
+function loadHiddenIds(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(HIDDEN_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === "string");
+  } catch {
+    return [];
+  }
+}
+
+function saveHiddenIds(ids: string[]) {
+  if (typeof window === "undefined") return;
+  try {
+    // Cap stored entries so the value can't grow without bound.
+    const trimmed = ids.length > 500 ? ids.slice(-500) : ids;
+    window.localStorage.setItem(HIDDEN_KEY, JSON.stringify(trimmed));
+  } catch {
+    /* ignore storage-denied contexts */
+  }
+}
+
+/** Messages minus the ones this device's user deleted for themselves. */
+export function withoutHidden(messages: Message[], hiddenIds: string[] | Set<string>): Message[] {
+  if (hiddenIds instanceof Set ? hiddenIds.size === 0 : hiddenIds.length === 0) return messages;
+  const hidden = hiddenIds instanceof Set ? hiddenIds : new Set(hiddenIds);
+  return messages.filter((m) => !hidden.has(m.id));
+}
+
+/**
+ * Hides a message on this device only ("Delete for me"). Works for any
+ * message, including a friend's — the server copy is untouched so everyone
+ * else still sees it. Survives reload via localStorage.
+ */
+export function hideMessageForMe(messageId: string): boolean {
+  if (!messageId || state.hiddenMessageIds.includes(messageId)) return false;
+  const next = [...state.hiddenMessageIds, messageId];
+  set({ hiddenMessageIds: next });
+  saveHiddenIds(next);
+  return true;
 }
 
 /* ---------- wire markers ---------- */
@@ -569,6 +618,7 @@ export function hydrate() {
       userId: prefs.userId,
       displayName: prefs.displayName,
       readTimestamps: loadReadTimestamps(),
+      hiddenMessageIds: loadHiddenIds(),
       ready: true,
     });
     void (async () => {
@@ -1067,6 +1117,7 @@ function wipeStoredIdentity() {
   try {
     window.localStorage.removeItem(PREFS_KEY);
     window.localStorage.removeItem(READ_KEY);
+    window.localStorage.removeItem(HIDDEN_KEY);
   } catch {
     /* ignore */
   }
@@ -1088,6 +1139,7 @@ export function forgetIdentity() {
     activeSpaceId: null,
     typingMap: {},
     readTimestamps: {},
+    hiddenMessageIds: [],
   });
 }
 

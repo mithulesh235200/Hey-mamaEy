@@ -55,6 +55,7 @@ import {
   deleteSpaceForEveryone,
   deleteMessage,
   editMessage,
+  hideMessageForMe,
   sendMessage,
   leaveSpace,
   markSpaceMessagesRead,
@@ -488,6 +489,30 @@ export function ChatPanel({
         : m.text
       : m.fileName || "attachment";
     setText((prev) => `> Replying to @${author}: "${snippet}"\n${prev}`);
+  };
+
+  // "Delete for me" hides any message (including a friend's) on this device
+  // only. "Delete for everyone" removes your own message from the server.
+  const handleDeleteForMe = (message: Message) => {
+    if (pinnedMessage?.id === message.id) setPinnedMessage(null);
+    setStarredIds((prev) => {
+      if (!prev.has(message.id)) return prev;
+      const next = new Set(prev);
+      next.delete(message.id);
+      return next;
+    });
+    const hidden = hideMessageForMe(message.id);
+    toast[hidden ? "success" : "info"](
+      hidden ? "Deleted for you only — others can still see it" : "Already deleted for you",
+    );
+  };
+
+  const handleDeleteForEveryone = async (message: Message) => {
+    if (!window.confirm("Delete this message for everyone?")) return;
+    const deleted = await deleteMessage(message.id, message.spaceId);
+    toast[deleted ? "success" : "error"](
+      deleted ? "Message deleted for everyone" : "Message could not be deleted",
+    );
   };
 
   useEffect(() => {
@@ -1614,13 +1639,10 @@ export function ChatPanel({
               setEditing(message);
               setText(message.text ?? "");
             }}
-            onDelete={async (message) => {
-              if (!window.confirm("Delete this message?")) return;
-              const deleted = await deleteMessage(message.id, message.spaceId);
-              toast[deleted ? "success" : "error"](
-                deleted ? "Message deleted" : "Message could not be deleted",
-              );
+            onDelete={(message) => {
+              void handleDeleteForEveryone(message);
             }}
+            onDeleteForMe={handleDeleteForMe}
           />
         ))}
         <div ref={bottomRef} />
@@ -2181,13 +2203,10 @@ export function ChatPanel({
                       setEditing(message);
                       setText(message.text ?? "");
                     }}
-                    onDelete={async (message) => {
-                      if (!window.confirm("Delete this message?")) return;
-                      const deleted = await deleteMessage(message.id, message.spaceId);
-                      toast[deleted ? "success" : "error"](
-                        deleted ? "Message deleted" : "Message could not be deleted",
-                      );
+                    onDelete={(message) => {
+                      void handleDeleteForEveryone(message);
                     }}
+                    onDeleteForMe={handleDeleteForMe}
                   />
                 ))
               )}
@@ -2565,7 +2584,8 @@ export function ChatPanel({
                     onReply={() => handleReplyQuote(m)}
                     isStarred={starredIds.has(m.id)}
                     onEdit={(msg) => setEditing(msg)}
-                    onDelete={(msg) => void deleteMessage(msg.id, space.id)}
+                    onDelete={(msg) => void handleDeleteForEveryone(msg)}
+                    onDeleteForMe={handleDeleteForMe}
                   />
                 ))}
             </div>

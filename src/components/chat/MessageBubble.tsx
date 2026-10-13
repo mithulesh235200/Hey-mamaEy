@@ -98,6 +98,7 @@ export function MessageBubble({
   isStarred,
   onEdit,
   onDelete,
+  onDeleteForMe,
   onOpenThread,
   allMessages = [],
   onPollVote,
@@ -113,6 +114,7 @@ export function MessageBubble({
   isStarred?: boolean;
   onEdit: (m: Message) => void;
   onDelete: (m: Message) => void;
+  onDeleteForMe: (m: Message) => void;
   onOpenThread?: (m: Message) => void;
   allMessages?: Message[];
   onPollVote?: (poll: Message, option: number) => void;
@@ -586,6 +588,17 @@ export function MessageBubble({
                 </button>
               )}
 
+              <button
+                type="button"
+                onClick={() => {
+                  onDeleteForMe(message);
+                  setShowMenu(false);
+                }}
+                className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-foreground hover:bg-secondary transition-colors"
+              >
+                <Trash2 className="size-4 text-muted-foreground" /> Delete for me
+              </button>
+
               {mine && (
                 <>
                   {message.kind === "text" && (
@@ -608,7 +621,7 @@ export function MessageBubble({
                     }}
                     className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-destructive hover:bg-destructive/10 transition-colors"
                   >
-                    <Trash2 className="size-4" /> Delete
+                    <Trash2 className="size-4" /> Delete for everyone
                   </button>
                 </>
               )}
