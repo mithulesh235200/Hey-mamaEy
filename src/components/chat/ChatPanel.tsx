@@ -868,16 +868,18 @@ export function ChatPanel({
     const pasted: File[] = [];
     if (clipboard.files && clipboard.files.length > 0) {
       pasted.push(...Array.from(clipboard.files));
-    } else if (clipboard.items) {
+    }
+    if (clipboard.items) {
       for (const item of Array.from(clipboard.items)) {
         if (item.kind === "file") {
           const f = item.getAsFile();
-          if (f) pasted.push(f);
+          if (f && !pasted.includes(f)) pasted.push(f);
         }
       }
     }
     if (pasted.length === 0) return;
     e.preventDefault();
+    toast.info(`Sending pasted ${pasted.length === 1 ? "image" : `${pasted.length} files`}...`);
     void handleFiles(pasted);
   };
 
