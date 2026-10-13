@@ -52,7 +52,6 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import {
   formatBytes,
-  kindForFile,
   readFileAsDataUrl,
   deleteSpaceForEveryone,
   deleteMessage,
@@ -72,6 +71,12 @@ import {
 import { MessageBubble } from "./MessageBubble";
 import { createP2PSender } from "@/lib/p2p-file";
 import { dataUrlToBlob, saveAttachmentToDevice, uploadAttachment } from "@/lib/attachments";
+import {
+  ACCEPT_AUDIO,
+  ACCEPT_DOCUMENT,
+  ACCEPT_IMAGE_VIDEO,
+  validateUserFile,
+} from "@/lib/fileValidation";
 
 const InAppCall = lazy(() =>
   import("./InAppCall").then((module) => ({ default: module.InAppCall })),
@@ -1042,15 +1047,16 @@ export function ChatPanel({
   const handleFiles = async (files: FileList | File[] | null) => {
     if (!files) return;
     for (const file of Array.from(files)) {
-      const displayName = file.name || `pasted-image-${Date.now()}.png`;
-      if (file.size > MAX_BYTES) {
-        toast.error(`${displayName} is too large (${formatBytes(file.size)})`, {
-          description: "Keep uploads under 20 MB, or use ⚡ P2P Direct Share for bigger files.",
-        });
+      const rawName = file.name || `pasted-image-${Date.now()}.png`;
+      // Safety gate FIRST: executables, scripts, HTML/SVG and content that
+      // doesn't match its extension are refused with no inline fallback.
+      const verdict = await validateUserFile(file, rawName, file.type);
+      if (!verdict.ok) {
+        toast.error(`Blocked ${rawName}`, { description: verdict.error });
         continue;
       }
+      const { kind, safeName, mime } = verdict;
       try {
-        const kind = kindForFile(file);
         // Images are compressed first (existing behavior), then everything is
         // uploaded to Supabase Storage. Falls back to inline data when offline
         // or before the space-media migration is applied.
@@ -1059,24 +1065,19 @@ export function ChatPanel({
         if (kind === "image") {
           const blob = await dataUrlToBlob(dataUrl);
           if (blob) {
-            remoteUrl = await uploadAttachment(
-              space.code,
-              blob,
-              displayName,
-              blob.type || file.type,
-            );
+            remoteUrl = await uploadAttachment(space.code, blob, safeName, mime);
           }
         } else {
-          remoteUrl = await uploadAttachment(space.code, file, displayName, file.type);
+          remoteUrl = await uploadAttachment(space.code, file, safeName, mime);
         }
         await push(kind, {
           dataUrl: remoteUrl ?? dataUrl,
-          fileName: displayName,
+          fileName: safeName,
           fileSize: file.size,
-          mimeType: file.type,
+          mimeType: mime,
         });
       } catch {
-        toast.error(`Couldn't read ${displayName}`);
+        toast.error(`Couldn't read ${safeName}`);
       }
     }
   };
@@ -1116,6 +1117,13 @@ export function ChatPanel({
   const handleP2PFileShare = async (files: FileList | null) => {
     if (!files || !space) return;
     for (const file of Array.from(files)) {
+      // Same safety gate as server uploads: P2P receivers download and open
+      // these files, so executables/scripts/HTML are refused up front.
+      const verdict = await validateUserFile(file, file.name, file.type);
+      if (!verdict.ok) {
+        toast.error(`Blocked ${file.name}`, { description: verdict.error });
+        continue;
+      }
       const transferId = `p2p_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
       const sender = createP2PSender(transferId, file, userId);
@@ -1126,13 +1134,16 @@ export function ChatPanel({
       // The chat message carries it as `dataUrl`; receivers download from the
       // server when the sender is offline, and use live P2P otherwise.
       // Large files that don't fit still send P2P-only with a keep-tab warning.
+      // (uploadAttachment re-validates and stores the canonical MIME.)
       let backupUrl: string | undefined;
       if (file.size <= MAX_BYTES) {
         try {
-          toast.info(`Uploading backup copy of ${file.name}...`, {
+          toast.info(`Uploading backup copy of ${verdict.safeName}...`, {
             description: "So it stays downloadable even if you go offline.",
           });
-          backupUrl = (await uploadAttachment(space.code, file, file.name, file.type)) ?? undefined;
+          backupUrl =
+            (await uploadAttachment(space.code, file, verdict.safeName, verdict.mime)) ??
+            undefined;
         } catch {
           backupUrl = undefined;
         }
@@ -1140,18 +1151,18 @@ export function ChatPanel({
 
       await push("p2p_file", {
         p2pTransferId: transferId,
-        p2pFileName: file.name,
+        p2pFileName: verdict.safeName,
         p2pFileSize: file.size,
-        p2pMimeType: file.type || "application/octet-stream",
+        p2pMimeType: verdict.mime,
         ...(backupUrl !== undefined && { dataUrl: backupUrl }),
-        text: `⚡ P2P Direct Stream: ${file.name} (${formatBytes(file.size)})`,
+        text: `⚡ P2P Direct Stream: ${verdict.safeName} (${formatBytes(file.size)})`,
       });
       if (backupUrl) {
-        toast.success(`Shared ${file.name}!`, {
+        toast.success(`Shared ${verdict.safeName}!`, {
           description: "Live P2P + server backup — stays downloadable if you leave.",
         });
       } else {
-        toast.success(`Started P2P Direct Share for ${file.name}!`, {
+        toast.success(`Started P2P Direct Share for ${verdict.safeName}!`, {
           description:
             file.size > MAX_BYTES
               ? "Too large for server backup — keep this tab open until they accept, or the file is lost."
@@ -1180,16 +1191,25 @@ export function ChatPanel({
       recorder.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunks, { type: recorder.mimeType });
-        const mime = blob.type || "audio/webm";
+        const rawMime = blob.type || "audio/webm";
+        const baseMime = rawMime.split(";")[0]?.trim().toLowerCase() || "audio/webm";
+        // Recorder output is generated locally (not an attacker file), but it
+        // still goes through validation: give it a proper extension + check size.
+        const voiceName = baseMime.includes("mp4") ? "Voice note.m4a" : "Voice note.webm";
         void (async () => {
+          const verdict = await validateUserFile(blob, voiceName, baseMime);
+          if (!verdict.ok) {
+            toast.error("Voice note couldn't be saved", { description: verdict.error });
+            return;
+          }
           // Prefer Supabase Storage; fall back to inline data when unavailable.
-          const url = await uploadAttachment(space.code, blob, "Voice note", mime);
+          const url = await uploadAttachment(space.code, blob, verdict.safeName, verdict.mime);
           if (url) {
             void push("audio", {
               dataUrl: url,
-              fileName: "Voice note",
+              fileName: verdict.safeName,
               fileSize: blob.size,
-              mimeType: mime,
+              mimeType: verdict.mime,
             });
             return;
           }
@@ -1197,9 +1217,9 @@ export function ChatPanel({
           reader.onload = () =>
             push("audio", {
               dataUrl: String(reader.result),
-              fileName: "Voice note",
+              fileName: verdict.safeName,
               fileSize: blob.size,
-              mimeType: mime,
+              mimeType: verdict.mime,
             });
           reader.readAsDataURL(blob);
         })();
@@ -2201,7 +2221,7 @@ export function ChatPanel({
         <input
           ref={mediaInputRef}
           type="file"
-          accept="image/*,video/*"
+          accept={ACCEPT_IMAGE_VIDEO}
           multiple
           hidden
           onChange={(e) => {
@@ -2212,7 +2232,7 @@ export function ChatPanel({
         <input
           ref={audioInputRef}
           type="file"
-          accept="audio/*"
+          accept={ACCEPT_AUDIO}
           hidden
           onChange={(e) => {
             void handleFiles(e.target.files);
@@ -2222,6 +2242,7 @@ export function ChatPanel({
         <input
           ref={fileInputRef}
           type="file"
+          accept={ACCEPT_DOCUMENT}
           multiple
           hidden
           onChange={(e) => {
@@ -2232,6 +2253,7 @@ export function ChatPanel({
         <input
           ref={p2pFileInputRef}
           type="file"
+          accept={`${ACCEPT_IMAGE_VIDEO},${ACCEPT_AUDIO},${ACCEPT_DOCUMENT}`}
           multiple
           hidden
           onChange={(e) => {

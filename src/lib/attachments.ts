@@ -2,6 +2,7 @@
 // Falls back to base64 data URLs when Storage is unavailable so the app
 // keeps working before the space-media migration is applied.
 import { supabase } from "@/integrations/supabase/client";
+import { validateUserFile } from "./fileValidation";
 
 const BUCKET = "space-media";
 
@@ -23,7 +24,13 @@ function randomId(): string {
 
 /**
  * Uploads a blob to the space-media bucket. Returns the public URL,
- * or null when Storage is unavailable (caller should use base64 fallback).
+ * or null when the file is rejected by safety validation or Storage is
+ * unavailable (caller should use base64 fallback ONLY for validated files).
+ *
+ * Defense in depth: the file is re-validated here (extension + MIME +
+ * magic bytes) and stored with the CANONICAL mime — never the raw
+ * client-claimed content type — so a renamed .exe can't be served back as
+ * image/png, and HTML/SVG can't be stored at all.
  */
 export async function uploadAttachment(
   spaceCode: string,
@@ -32,11 +39,13 @@ export async function uploadAttachment(
   mimeType: string,
 ): Promise<string | null> {
   try {
+    const verdict = await validateUserFile(blob, fileName, mimeType);
+    if (!verdict.ok) return null;
     const safeCode = spaceCode.replace(/[^0-9a-zA-Z-]/g, "") || "shared";
-    const path = `${safeCode}/${randomId()}-${sanitizeFileName(fileName)}`;
+    const path = `${safeCode}/${randomId()}-${sanitizeFileName(verdict.safeName)}`;
     const { error } = await supabase.storage
       .from(BUCKET)
-      .upload(path, blob, { contentType: mimeType || "application/octet-stream", upsert: false });
+      .upload(path, blob, { contentType: verdict.mime, upsert: false });
     if (error) return null;
     const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
     return data.publicUrl || null;
