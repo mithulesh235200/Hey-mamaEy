@@ -42,6 +42,7 @@ import {
   MoreHorizontal,
   Plus,
   Smile,
+  Reply,
   Trash2,
   Bell,
   BellOff,
@@ -152,6 +153,9 @@ export function ChatPanel({
   const [recording, setRecording] = useState(false);
   const [recordSecs, setRecordSecs] = useState(0);
   const [editing, setEditing] = useState<Message | null>(null);
+  // Inline reply-quote target: shown as a preview chip above the composer
+  // instead of raw `> Replying to...` text inside the input.
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [pinnedMessage, setPinnedMessage] = useState<Message | null>(null);
   const [mutedSound, setMutedSound] = useState(false);
   const [soundEffectsEnabled, setSoundEffectsEnabled] = useState(true);
@@ -482,13 +486,19 @@ export function ChatPanel({
   };
 
   const handleReplyQuote = (m: Message) => {
-    const author = m.authorName || "User";
-    const snippet = m.text
-      ? m.text.length > 40
-        ? m.text.slice(0, 40) + "..."
+    setEditing(null);
+    setReplyTo(m);
+  };
+
+  const replySnippet = (m: Message) => {
+    const raw = m.text
+      ? m.text.length > 60
+        ? m.text.slice(0, 60) + "..."
         : m.text
       : m.fileName || "attachment";
-    setText((prev) => `> Replying to @${author}: "${snippet}"\n${prev}`);
+    // Never nest a quote inside a quote preview.
+    const firstLine = raw.split("\n")[0] ?? "";
+    return firstLine.startsWith("> Replying to @") ? "message" : firstLine;
   };
 
   // "Delete for me" hides any message (including a friend's) on this device
@@ -801,14 +811,21 @@ export function ChatPanel({
       if (updated) {
         setText("");
         setEditing(null);
+        setReplyTo(null);
       } else {
         toast.error("Message could not be edited");
       }
       return;
     }
-    const ok = await sendMessage({ spaceId: space.id, kind: "text", text: value });
+    // Attach the reply quote as the first line (same wire format as before,
+    // now rendered as a styled quote block instead of raw text).
+    const outgoing = replyTo
+      ? `> Replying to @${replyTo.authorName || "User"}: "${replySnippet(replyTo)}"\n${value}`
+      : value;
+    const ok = await sendMessage({ spaceId: space.id, kind: "text", text: outgoing });
     if (ok) {
       setText("");
+      setReplyTo(null);
       playChime("send", mutedSound || !soundEffectsEnabled);
     } else {
       toast.error("Message failed to send — check your connection");
@@ -1636,6 +1653,7 @@ export function ChatPanel({
             onOpenThread={(message) => setActiveThreadMessage(message)}
             isStarred={starredIds.has(m.id)}
             onEdit={(message) => {
+              setReplyTo(null);
               setEditing(message);
               setText(message.text ?? "");
             }}
@@ -1818,6 +1836,25 @@ export function ChatPanel({
               className="font-semibold text-foreground hover:text-primary"
             >
               Cancel
+            </button>
+          </div>
+        )}
+        {replyTo && !editing && (
+          <div className="mb-2 flex items-center gap-2 rounded-lg border-l-2 border-primary bg-secondary px-3 py-2">
+            <Reply className="size-3.5 shrink-0 text-primary" />
+            <div className="min-w-0 flex-1 text-xs">
+              <p className="truncate font-semibold text-primary">
+                Replying to @{replyTo.authorName || "User"}
+              </p>
+              <p className="truncate text-muted-foreground">{replySnippet(replyTo)}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setReplyTo(null)}
+              aria-label="Cancel reply"
+              className="flex min-h-9 min-w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-3.5" />
             </button>
           </div>
         )}
@@ -2200,6 +2237,7 @@ export function ChatPanel({
                     isStarred={true}
                     onEdit={(message) => {
                       setShowStarredModal(false);
+                      setReplyTo(null);
                       setEditing(message);
                       setText(message.text ?? "");
                     }}
@@ -2583,7 +2621,10 @@ export function ChatPanel({
                     onStar={(msg) => toggleStar(msg)}
                     onReply={() => handleReplyQuote(m)}
                     isStarred={starredIds.has(m.id)}
-                    onEdit={(msg) => setEditing(msg)}
+                    onEdit={(msg) => {
+                      setReplyTo(null);
+                      setEditing(msg);
+                    }}
                     onDelete={(msg) => void handleDeleteForEveryone(msg)}
                     onDeleteForMe={handleDeleteForMe}
                   />

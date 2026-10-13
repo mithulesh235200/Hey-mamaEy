@@ -27,6 +27,29 @@ import { P2PFileBubble } from "./P2PFileBubble";
 
 const POLL_VOTE_PREFIX = "__poll_vote__:";
 
+const QUOTE_PREFIX = "> Replying to @";
+
+function splitQuote(text: string): { author: string; snippet: string; rest: string } | null {
+  if (!text.startsWith(QUOTE_PREFIX)) return null;
+  const newline = text.indexOf("\n");
+  const firstLine = newline === -1 ? text : text.slice(0, newline);
+  const rest = newline === -1 ? "" : text.slice(newline + 1);
+  const match = firstLine.match(/^> Replying to @([^:]+): ?"?([\s\S]*?)"?$/);
+  if (!match) return { author: "", snippet: firstLine.replace(/^> /, ""), rest };
+  return { author: (match[1] ?? "").trim(), snippet: match[2] ?? "", rest };
+}
+
+function renderRichText(body: string, mine: boolean, keyPrefix = "") {
+  if (!body.includes("```")) return <span key={`${keyPrefix}plain`}>{body}</span>;
+  return body.split(/(```[\s\S]*?```)/g).map((chunk, i) => {
+    if (chunk.startsWith("```") && chunk.endsWith("```")) {
+      const innerCode = chunk.slice(3, -3);
+      return <CodeSnippet key={`${keyPrefix}${i}`} codeText={innerCode} mine={mine} />;
+    }
+    return <span key={`${keyPrefix}${i}`}>{chunk}</span>;
+  });
+}
+
 function readPoll(text: string) {
   const lines = text.split("\n");
   const match = lines[0]?.match(/^📊\s*\*\*POLL:\s*(.*?)\*\*$/);
@@ -257,15 +280,29 @@ export function MessageBubble({
           )}
           {!poll && message.kind === "text" && message.text && (
             <div className="whitespace-pre-wrap break-words text-xs leading-relaxed sm:text-sm font-medium">
-              {message.text.includes("```")
-                ? message.text.split(/(```[\s\S]*?```)/g).map((chunk, i) => {
-                    if (chunk.startsWith("```") && chunk.endsWith("```")) {
-                      const innerCode = chunk.slice(3, -3);
-                      return <CodeSnippet key={i} codeText={innerCode} mine={mine} />;
-                    }
-                    return <span key={i}>{chunk}</span>;
-                  })
-                : message.text}
+              {(() => {
+                const quote = splitQuote(message.text ?? "");
+                if (!quote) return renderRichText(message.text ?? "", mine);
+                return (
+                  <>
+                    <div
+                      className={`mb-1.5 rounded-lg border-l-2 px-2 py-1 text-[11px] leading-snug ${
+                        mine
+                          ? "border-primary-foreground/60 bg-primary-foreground/10"
+                          : "border-primary/60 bg-secondary"
+                      }`}
+                    >
+                      <p className="truncate font-semibold opacity-90">
+                        {quote.author ? `↩ ${quote.author}` : "↩ Replied message"}
+                      </p>
+                      {quote.snippet && (
+                        <p className="line-clamp-2 break-words opacity-75">{quote.snippet}</p>
+                      )}
+                    </div>
+                    {quote.rest && renderRichText(quote.rest, mine, "rest-")}
+                  </>
+                );
+              })()}
             </div>
           )}
 
