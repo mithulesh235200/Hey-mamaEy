@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatBytes, type Message } from "@/lib/heymama";
+import { saveAttachmentToDevice } from "@/lib/attachments";
 import { AudioMessage } from "./AudioMessage";
 import { P2PFileBubble } from "./P2PFileBubble";
 
@@ -121,6 +122,27 @@ export function MessageBubble({
   const [showReactions, setShowReactions] = useState(false);
   const [reactions, setReactions] = useState<Record<string, number>>({});
   const [speaking, setSpeaking] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const saveFile = async () => {
+    if (!message.dataUrl || saving) return;
+    setSaving(true);
+    try {
+      const result = await saveAttachmentToDevice(
+        message.dataUrl,
+        message.fileName || `space-connect-${message.kind}-${Date.now()}`,
+      );
+      if (result.ok) {
+        if (!result.shared) toast.success("Saved to your device!");
+      } else {
+        toast.error("Couldn't save yet — file opened in a new tab", {
+          description: "Long-press / right-click the file and choose Save.",
+        });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const copyText = async () => {
     if (!message.text) return;
@@ -258,15 +280,16 @@ export function MessageBubble({
                   className="max-h-64 w-full object-cover transition-transform hover:scale-102"
                 />
               </button>
-              <a
-                href={message.dataUrl}
-                download={message.fileName || `heymama-photo-${Date.now()}`}
-                className={`flex items-center gap-1 text-[11px] font-semibold hover:underline ${
+              <button
+                type="button"
+                onClick={() => void saveFile()}
+                disabled={saving}
+                className={`flex items-center gap-1 text-[11px] font-semibold hover:underline disabled:opacity-60 ${
                   mine ? "text-primary-foreground underline-offset-2" : "text-primary"
                 }`}
               >
-                <Download className="size-3" /> Save Photo
-              </a>
+                <Download className="size-3" /> {saving ? "Saving..." : "Save Photo"}
+              </button>
             </div>
           )}
 
@@ -277,20 +300,33 @@ export function MessageBubble({
                 controls
                 className="max-h-64 w-full rounded-xl bg-black"
               />
-              <a
-                href={message.dataUrl}
-                download={message.fileName || `heymama-video-${Date.now()}`}
-                className={`flex items-center gap-1 text-[11px] font-semibold hover:underline ${
+              <button
+                type="button"
+                onClick={() => void saveFile()}
+                disabled={saving}
+                className={`flex items-center gap-1 text-[11px] font-semibold hover:underline disabled:opacity-60 ${
                   mine ? "text-primary-foreground underline-offset-2" : "text-primary"
                 }`}
               >
-                <Download className="size-3" /> Download Video
-              </a>
+                <Download className="size-3" /> {saving ? "Saving..." : "Download Video"}
+              </button>
             </div>
           )}
 
           {message.kind === "audio" && message.dataUrl && (
-            <AudioMessage dataUrl={message.dataUrl} mine={mine} />
+            <div className="space-y-1">
+              <AudioMessage dataUrl={message.dataUrl} mine={mine} />
+              <button
+                type="button"
+                onClick={() => void saveFile()}
+                disabled={saving}
+                className={`flex items-center gap-1 text-[11px] font-semibold hover:underline disabled:opacity-60 ${
+                  mine ? "text-primary-foreground underline-offset-2" : "text-primary"
+                }`}
+              >
+                <Download className="size-3" /> {saving ? "Saving..." : "Save Audio"}
+              </button>
+            </div>
           )}
 
           {message.kind === "p2p_file" && (
@@ -315,18 +351,20 @@ export function MessageBubble({
                 </p>
               </div>
               {message.dataUrl && (
-                <a
-                  href={message.dataUrl}
-                  download={message.fileName || "download"}
-                  className={`rounded-lg p-2 transition-colors ${
+                <button
+                  type="button"
+                  onClick={() => void saveFile()}
+                  disabled={saving}
+                  className={`rounded-lg p-2 transition-colors disabled:opacity-60 ${
                     mine
                       ? "hover:bg-primary-foreground/20 text-primary-foreground"
                       : "hover:bg-secondary text-foreground"
                   }`}
                   aria-label="Download file"
+                  title={saving ? "Saving..." : "Save to device"}
                 >
                   <Download className="size-4" />
-                </a>
+                </button>
               )}
             </div>
           )}

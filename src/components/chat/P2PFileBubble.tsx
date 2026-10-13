@@ -67,6 +67,7 @@ export function P2PFileBubble({
 
   const handleDownload = () => {
     if (!progress.blobUrl) return;
+    // blob: URLs are same-origin so the download attribute is honoured here.
     const a = document.createElement("a");
     a.href = progress.blobUrl;
     a.download = fileName;

@@ -66,7 +66,7 @@ import {
 } from "@/lib/heymama";
 import { MessageBubble } from "./MessageBubble";
 import { createP2PSender } from "@/lib/p2p-file";
-import { dataUrlToBlob, uploadAttachment } from "@/lib/attachments";
+import { dataUrlToBlob, saveAttachmentToDevice, uploadAttachment } from "@/lib/attachments";
 
 const InAppCall = lazy(() =>
   import("./InAppCall").then((module) => ({ default: module.InAppCall })),
@@ -410,8 +410,7 @@ export function ChatPanel({
     if (messages.length === 0) {
       toast.error("No chat history to export");
       return;
-    }
-    let content = `=========================================\nHEY MAMAEY - CHAT EXPORT BACKUP\nSpace: ${space?.name} (Code: ${space?.code})\nExported: ${new Date().toLocaleString()}\n=========================================\n\n`;
+    }    let content = `=========================================\nHEY MAMAEY - CHAT EXPORT BACKUP\nSpace: ${space?.name} (Code: ${space?.code})\nExported: ${new Date().toLocaleString()}\n=========================================\n\n`;
 
     messages.forEach((m) => {
       const dateStr = new Date(m.createdAt).toLocaleString();
@@ -430,6 +429,32 @@ export function ChatPanel({
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     toast.success("Chat history exported!");
+  };
+
+  // Saves any Supabase-hosted attachment to phone/desktop local storage.
+  // Uses fetch-then-blob so cross-origin Supabase URLs actually download
+  // instead of just opening in a new tab.
+  const handleSaveAttachment = async (dataUrl: string | undefined, fileName?: string) => {
+    if (!dataUrl) {
+      toast.error("No file to save");
+      return;
+    }
+    try {
+      toast.info("Saving to your device...");
+      const result = await saveAttachmentToDevice(
+        dataUrl,
+        fileName || `space-connect-file-${Date.now()}`,
+      );
+      if (result.ok) {
+        if (!result.shared) toast.success("Saved to your device!");
+      } else {
+        toast.error("Couldn't save yet — file opened in a new tab", {
+          description: "Long-press / right-click the file and choose Save.",
+        });
+      }
+    } catch {
+      toast.error("Couldn't save this file");
+    }
   };
 
   useEffect(() => {
@@ -2059,13 +2084,13 @@ export function ChatPanel({
                       )}
                       <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
                         <span className="truncate">{m.authorName}</span>
-                        <a
-                          href={m.dataUrl}
-                          download={m.fileName || `heymama-${m.kind}-${Date.now()}`}
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveAttachment(m.dataUrl, m.fileName)}
                           className="flex items-center gap-1 text-primary hover:underline font-semibold"
                         >
                           <Download className="size-3" /> Save
-                        </a>
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -2400,15 +2425,17 @@ export function ChatPanel({
                 </button>
               ))}
             </div>
-            <a
-              href={lightbox}
-              download={`space-connect-photo-${Date.now()}.jpg`}
-              onClick={(e) => e.stopPropagation()}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleSaveAttachment(lightbox, `space-connect-photo-${Date.now()}.jpg`);
+              }}
               className="flex items-center gap-1.5 rounded-full bg-card px-4 py-2 text-xs font-semibold text-foreground shadow-xl hover:text-primary transition-colors"
             >
               <Download className="size-4" />
               <span>Download Photo</span>
-            </a>
+            </button>
             <button
               type="button"
               aria-label="Close image"
@@ -2649,13 +2676,13 @@ export function ChatPanel({
                       </p>
                     </div>
                     {m.dataUrl && (
-                      <a
-                        href={m.dataUrl}
-                        download={m.fileName || `download-${m.id}`}
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveAttachment(m.dataUrl, m.fileName)}
                         className="flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground shadow-xs"
                       >
                         <Download className="size-3" /> Save
-                      </a>
+                      </button>
                     )}
                   </div>
                 ))}
