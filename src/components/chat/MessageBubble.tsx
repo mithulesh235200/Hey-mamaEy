@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Check,
   CheckCheck,
@@ -37,6 +37,13 @@ function splitQuote(text: string): { author: string; snippet: string; rest: stri
   const match = firstLine.match(/^> Replying to @([^:]+): ?"?([\s\S]*?)"?$/);
   if (!match) return { author: "", snippet: firstLine.replace(/^> /, ""), rest };
   return { author: (match[1] ?? "").trim(), snippet: match[2] ?? "", rest };
+}
+
+/** Readable body without the `> Replying to ...` quote line (for copy / TTS). */
+function bodyWithoutQuote(text: string): string {
+  const quote = splitQuote(text);
+  if (!quote) return text;
+  return quote.rest || quote.snippet || text;
 }
 
 function renderRichText(body: string, mine: boolean, keyPrefix = "") {
@@ -148,6 +155,44 @@ export function MessageBubble({
   const [reactions, setReactions] = useState<Record<string, number>>({});
   const [speaking, setSpeaking] = useState(false);
   const [saving, setSaving] = useState(false);
+  const actionsRef = useRef<HTMLDivElement>(null);
+
+  // Clicking Reply or anywhere else inside the chat panel must not leave a
+  // stale per-message popup open. Close on outside click / Escape.
+  useEffect(() => {
+    if (!showMenu && !showReactions) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+        setShowReactions(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setShowMenu(false);
+        setShowReactions(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [showMenu, showReactions]);
+
+  // Stop speech when this bubble unmounts (space switch / delete).
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        try {
+          window.speechSynthesis.cancel();
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+  }, []);
 
   const saveFile = async () => {
     if (!message.dataUrl || saving) return;
@@ -172,7 +217,7 @@ export function MessageBubble({
   const copyText = async () => {
     if (!message.text) return;
     try {
-      await navigator.clipboard.writeText(message.text);
+      await navigator.clipboard.writeText(bodyWithoutQuote(message.text));
       toast.success("Copied to clipboard");
     } catch {
       toast.error("Could not copy");
@@ -201,7 +246,7 @@ export function MessageBubble({
     }
 
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(message.text);
+    const utterance = new SpeechSynthesisUtterance(bodyWithoutQuote(message.text));
     utterance.onend = () => setSpeaking(false);
     utterance.onerror = () => setSpeaking(false);
     setSpeaking(true);
@@ -475,7 +520,10 @@ export function MessageBubble({
         </div>
 
         {/* Message Actions */}
-        <div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex flex-wrap items-center gap-0.5 relative shrink-0 max-w-full [&>button]:min-h-9 [&>button]:min-w-9">
+        <div
+          ref={actionsRef}
+          className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex flex-wrap items-center gap-0.5 relative shrink-0 max-w-full [&>button]:min-h-9 [&>button]:min-w-9"
+        >
           {message.text && (
             <button
               type="button"
@@ -493,7 +541,11 @@ export function MessageBubble({
           {onOpenThread && (
             <button
               type="button"
-              onClick={() => onOpenThread(message)}
+              onClick={() => {
+                setShowMenu(false);
+                setShowReactions(false);
+                onOpenThread(message);
+              }}
               title="Reply in Thread"
               className="rounded-full bg-card p-1.5 text-muted-foreground hover:text-primary transition-colors"
             >
@@ -503,8 +555,13 @@ export function MessageBubble({
 
           <button
             type="button"
-            onClick={() => onReply(message)}
+            onClick={() => {
+              setShowMenu(false);
+              setShowReactions(false);
+              onReply(message);
+            }}
             title="Reply quote"
+            aria-label="Reply to message"
             className="rounded-full bg-card p-1.5 text-muted-foreground hover:text-primary transition-colors"
           >
             <Reply className="size-3.5" />
@@ -512,8 +569,13 @@ export function MessageBubble({
 
           <button
             type="button"
-            onClick={() => setShowReactions((v) => !v)}
+            onClick={() => {
+              setShowMenu(false);
+              setShowReactions((v) => !v);
+            }}
             title="React"
+            aria-label="React to message"
+            aria-expanded={showReactions}
             className="rounded-full bg-card p-1.5 text-muted-foreground hover:text-primary transition-colors"
           >
             <Smile className="size-3.5" />
@@ -521,8 +583,13 @@ export function MessageBubble({
 
           <button
             type="button"
-            onClick={() => setShowMenu((v) => !v)}
+            onClick={() => {
+              setShowReactions(false);
+              setShowMenu((v) => !v);
+            }}
             title="More options (Copy, Star, Pin, Delete)"
+            aria-label="More message options"
+            aria-expanded={showMenu}
             className="rounded-full bg-card p-1.5 text-muted-foreground hover:text-foreground shadow-xs border border-border/50"
           >
             <MoreVertical className="size-3.5" />

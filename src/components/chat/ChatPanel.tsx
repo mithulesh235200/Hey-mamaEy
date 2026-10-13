@@ -76,15 +76,39 @@ const InAppCall = lazy(() =>
 
 const MAX_BYTES = 20 * 1024 * 1024; // 20 MB server-upload limit (larger files: use P2P Direct Share)
 const POLL_VOTE_PREFIX = "__poll_vote__:";
+const QUOTE_PREFIX = "> Replying to @";
 
-function playChime(type: "send" | "receive", muted: boolean) {
-  if (muted) return;
+/** Editable body: drop the quote line (reply) so Edit never shows raw quote syntax. */
+function stripForEdit(text: string): string {
+  if (!text.startsWith(QUOTE_PREFIX)) return text;
+  const newline = text.indexOf("\n");
+  return newline === -1 ? "" : text.slice(newline + 1);
+}
+
+// Reuse one AudioContext: creating a new one per chime leaks contexts and
+// browsers cap them (sound stops after a handful of messages).
+let sharedAudioCtx: AudioContext | null = null;
+function getSharedAudioCtx(): AudioContext | null {
   try {
     const AudioCtx =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
+    if (!AudioCtx) return null;
+    if (!sharedAudioCtx || sharedAudioCtx.state === "closed") {
+      sharedAudioCtx = new AudioCtx();
+    }
+    if (sharedAudioCtx.state === "suspended") void sharedAudioCtx.resume();
+    return sharedAudioCtx;
+  } catch {
+    return null;
+  }
+}
+
+function playChime(type: "send" | "receive", muted: boolean) {
+  if (muted) return;
+  try {
+    const ctx = getSharedAudioCtx();
+    if (!ctx) return;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.connect(gain);
@@ -204,6 +228,9 @@ export function ChatPanel({
   const [showPinSetup, setShowPinSetup] = useState(false);
   const [newPinInput, setNewPinInput] = useState("");
   const [roomPasswordInput, setRoomPasswordInput] = useState("");
+  // Owner's "add/change room password" box uses its own input so it never
+  // clobbers the "enter password to unlock" field (they shared state before).
+  const [roomPasswordSettingInput, setRoomPasswordSettingInput] = useState("");
   const [showRoomPasswordBox, setShowRoomPasswordBox] = useState(false);
   const lockedCount = messages.filter((m) => m.locked).length;
 
@@ -222,8 +249,9 @@ export function ChatPanel({
   const [deletingSpace, setDeletingSpace] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
   const [callMode, setCallMode] = useState<"voice" | "video" | null>(null);
-  const [activeMembers, setActiveMembers] = useState<string[]>([]);
-  const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+  const [activeMembers, setActiveMembers] = useState<Array<{ userId: string; name: string }>>([]);
+  // Typing state keyed by userId (names can collide, e.g. two "Anonymous").
+  const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
   const [showScrollBottom, setShowScrollBottom] = useState(false);
 
   // Poll creation modal state
@@ -233,6 +261,8 @@ export function ChatPanel({
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const nearBottomRef = useRef(true);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -485,16 +515,31 @@ export function ChatPanel({
     });
   };
 
+  const focusComposer = () => {
+    // Let state flush first so focus lands after the reply/edit chip renders.
+    requestAnimationFrame(() => composerRef.current?.focus());
+  };
+
   const handleReplyQuote = (m: Message) => {
     setEditing(null);
     setReplyTo(m);
+    focusComposer();
+  };
+
+  const handleStartEdit = (m: Message) => {
+    setReplyTo(null);
+    setEditing(m);
+    // Editing a reply used to dump the raw `> Replying to ...` quote and the
+    // hidden thread marker into the box. Show only the editable body.
+    setText(stripForEdit(m.text ?? ""));
+    focusComposer();
   };
 
   const replySnippet = (m: Message) => {
     const raw = m.text
-      ? m.text.length > 60
-        ? m.text.slice(0, 60) + "..."
-        : m.text
+      ? stripForEdit(m.text).length > 60
+        ? stripForEdit(m.text).slice(0, 60) + "..."
+        : stripForEdit(m.text)
       : m.fileName || "attachment";
     // Never nest a quote inside a quote preview.
     const firstLine = raw.split("\n")[0] ?? "";
@@ -533,12 +578,17 @@ export function ChatPanel({
     presenceChannelRef.current = channel;
 
     const updateMembers = () => {
-      const state = channel.presenceState<{ name?: string }>();
-      const names = Object.values(state)
-        .flat()
-        .map((entry) => entry.name?.trim())
-        .filter((name): name is string => Boolean(name));
-      setActiveMembers([...new Set(names)]);
+      const state = channel.presenceState<{ name?: string; userId?: string }>();
+      const seen = new Map<string, string>();
+      for (const entries of Object.values(state)) {
+        for (const entry of entries) {
+          const name = entry.name?.trim();
+          const id = entry.userId?.trim() || name;
+          if (!name || !id) continue;
+          if (!seen.has(id)) seen.set(id, name);
+        }
+      }
+      setActiveMembers([...seen.entries()].map(([userId, name]) => ({ userId, name })));
     };
 
     channel
@@ -552,13 +602,14 @@ export function ChatPanel({
           if (payload.userId === userId) return;
           const previousTimer = typingExpiryRef.current.get(payload.userId);
           if (previousTimer) clearTimeout(previousTimer);
-          setTypingUsers((prev) => new Set(prev).add(payload.name));
+          const label = payload.name?.trim() || "Anonymous";
+          setTypingUsers((prev) => new Map(prev).set(payload.userId, label));
           typingExpiryRef.current.set(
             payload.userId,
             setTimeout(() => {
               setTypingUsers((prev) => {
-                const next = new Set(prev);
-                next.delete(payload.name);
+                const next = new Map(prev);
+                next.delete(payload.userId);
                 return next;
               });
               typingExpiryRef.current.delete(payload.userId);
@@ -575,8 +626,8 @@ export function ChatPanel({
           if (timer) clearTimeout(timer);
           typingExpiryRef.current.delete(payload.userId);
           setTypingUsers((prev) => {
-            const next = new Set(prev);
-            next.delete(payload.name);
+            const next = new Map(prev);
+            next.delete(payload.userId);
             return next;
           });
         },
@@ -596,9 +647,86 @@ export function ChatPanel({
       typingTimers.clear();
       presenceChannelRef.current = null;
       setActiveMembers([]);
-      setTypingUsers(new Set());
+      setTypingUsers(new Map());
     };
   }, [displayName, space, userId]);
+
+  // Reload per-space disappearing timer when switching spaces (useState
+  // initializer only runs once, so it went stale before).
+  useEffect(() => {
+    if (!space?.id) return;
+    try {
+      const saved = localStorage.getItem(`heymamaey.disappearing.${space.id}`) as DisappearingTimer | null;
+      setDisappearingTimer(saved === "24h" || saved === "7d" || saved === "30d" ? saved : "off");
+    } catch {
+      setDisappearingTimer("off");
+    }
+    setShowDisappearingMenu(false);
+    // Reset transient composer/panel state so one space never leaks into another.
+    setReplyTo(null);
+    setEditing(null);
+    setText("");
+    setThreadText("");
+    setActiveThreadMessage(null);
+    setSearchQuery("");
+    setShowSearch(false);
+    setRoomPasswordSettingInput("");
+    nearBottomRef.current = true;
+  }, [space?.id]);
+
+  // Stop any in-progress voice recording when leaving / switching spaces.
+  useEffect(() => {
+    return () => {
+      try {
+        recorderRef.current?.stop();
+      } catch {
+        /* ignore */
+      }
+      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    };
+  }, []);
+
+  // Global Escape: close dropdowns, drawers and modals in a predictable order.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (showSoundboard) return setShowSoundboard(false);
+      if (activeThreadMessage) return setActiveThreadMessage(null);
+      if (lightbox) {
+        setLightbox(null);
+        setActivePhotoFilter("none");
+        return;
+      }
+      if (showPollModal) return setShowPollModal(false);
+      if (showGalleryModal) return setShowGalleryModal(false);
+      if (showStarredModal) return setShowStarredModal(false);
+      if (showStorageManager) return setShowStorageManager(false);
+      if (showQrModal) return setShowQrModal(false);
+      if (showDeleteSpaceModal) return setShowDeleteSpaceModal(false);
+      if (showPinSetup) return setShowPinSetup(false);
+      setShowGifsMenu(false);
+      setShowSnippetsMenu(false);
+      setShowDisappearingMenu(false);
+      setShowWallpaperMenu(false);
+      setShowMobileActions(false);
+      setShowMobileAttachments(false);
+      setShowMobileEmojis(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [
+    showSoundboard,
+    activeThreadMessage,
+    lightbox,
+    showPollModal,
+    showGalleryModal,
+    showStarredModal,
+    showStorageManager,
+    showQrModal,
+    showDeleteSpaceModal,
+    showPinSetup,
+  ]);
 
   const handleTyping = (val: string) => {
     setText(val);
@@ -642,15 +770,18 @@ export function ChatPanel({
   const handleScroll = () => {
     const el = scrollContainerRef.current;
     if (!el) return;
-    const isUp = el.scrollHeight - el.scrollTop - el.clientHeight > 150;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const isUp = distanceFromBottom > 150;
+    nearBottomRef.current = distanceFromBottom < 80;
     setShowScrollBottom(isUp);
   };
 
   const scrollToBottom = () => {
+    nearBottomRef.current = true;
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  const shareSpace = async () => {
+  const shareSpace = () => {
     setShowQrModal(true);
   };
 
@@ -730,6 +861,9 @@ export function ChatPanel({
   };
 
   useEffect(() => {
+    // Don't yank the user away from history: only auto-scroll when they were
+    // already near the bottom (or just switched spaces).
+    if (!nearBottomRef.current) return;
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, space?.id]);
 
@@ -779,6 +913,21 @@ export function ChatPanel({
 
   const starredMessagesList = messages.filter((m) => starredIds.has(m.id));
 
+  const handlePollVote = (poll: Message, option: number) => {
+    const voteText = `${POLL_VOTE_PREFIX}${poll.id}:${option}`;
+    const previousVote = [...messages]
+      .reverse()
+      .find(
+        (candidate) =>
+          candidate.authorId === userId &&
+          candidate.text?.startsWith(`${POLL_VOTE_PREFIX}${poll.id}:`),
+      );
+    if (previousVote?.text === voteText) return;
+    void sendMessage({ spaceId: poll.spaceId, kind: "text", text: voteText }).then((sent) => {
+      if (!sent) toast.error("Your poll vote could not be saved. Check your connection.");
+    });
+  };
+
   const push = async (
     kind: MediaKind,
     extra: Partial<Omit<Message, "id" | "createdAt" | "authorId" | "authorName">>,
@@ -803,10 +952,16 @@ export function ChatPanel({
     }
 
     if (editing) {
-      // Re-attach the thread marker so the reply stays in its thread.
+      // Preserve the original reply quote (Edit box shows body only), and
+      // re-attach the thread marker so the reply stays in its thread.
+      const originalQuote =
+        editing.text?.startsWith(QUOTE_PREFIX) && editing.text.includes("\n")
+          ? editing.text.slice(0, editing.text.indexOf("\n"))
+          : null;
+      const bodyToSave = originalQuote ? `${originalQuote}\n${value}` : value;
       const savedText = editing.threadParentId
-        ? `${value}${THREAD_MARKER}${editing.threadParentId}`
-        : value;
+        ? `${bodyToSave}${THREAD_MARKER}${editing.threadParentId}`
+        : bodyToSave;
       const updated = await editMessage(editing.id, space.id, savedText);
       if (updated) {
         setText("");
@@ -907,16 +1062,23 @@ export function ChatPanel({
   const handleComposerPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const clipboard = e.clipboardData;
     if (!clipboard) return;
+    const seen = new Set<string>();
     const pasted: File[] = [];
+    const addFile = (f: File | null) => {
+      if (!f) return;
+      // clipboard.files and clipboard.items can describe the SAME file with
+      // different object identities — dedupe by content key, not reference.
+      const key = `${f.name}|${f.size}|${f.lastModified}|${f.type}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      pasted.push(f);
+    };
     if (clipboard.files && clipboard.files.length > 0) {
-      pasted.push(...Array.from(clipboard.files));
+      Array.from(clipboard.files).forEach(addFile);
     }
     if (clipboard.items) {
       for (const item of Array.from(clipboard.items)) {
-        if (item.kind === "file") {
-          const f = item.getAsFile();
-          if (f && !pasted.includes(f)) pasted.push(f);
-        }
+        if (item.kind === "file") addFile(item.getAsFile());
       }
     }
     if (pasted.length === 0) return;
@@ -1053,10 +1215,8 @@ export function ChatPanel({
   const playFX = (name: string) => {
     if (!soundEffectsEnabled || mutedSound) return;
     try {
-      const AudioCtx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const ctx = new AudioCtx();
+      const ctx = getSharedAudioCtx();
+      if (!ctx) return;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
@@ -1100,7 +1260,9 @@ export function ChatPanel({
     setShowSoundboard(false);
   };
 
-  const typingArray = typingIndicatorsEnabled ? Array.from(typingUsers) : [];
+  const typingArray = typingIndicatorsEnabled ? [...typingUsers.values()] : [];
+  const otherMembers = activeMembers.filter((m) => m.userId !== userId);
+  const otherMemberNames = [...new Set(otherMembers.map((m) => m.name))];
 
   const getWallpaperStyle = () => {
     if (wallpaper === "dots") {
@@ -1212,12 +1374,7 @@ export function ChatPanel({
               <span className="hidden min-w-0 items-center gap-1 truncate md:flex">
                 <span className="size-1.5 rounded-full bg-emerald-400" />
                 <span className="truncate">
-                  {activeMembers.filter((name) => name !== (displayName.trim() || "Anonymous"))
-                    .length > 0
-                    ? activeMembers
-                        .filter((name) => name !== (displayName.trim() || "Anonymous"))
-                        .join(", ")
-                    : "Only you here"}
+                  {otherMemberNames.length > 0 ? otherMemberNames.join(", ") : "Only you here"}
                 </span>
               </span>
             </div>
@@ -1226,7 +1383,7 @@ export function ChatPanel({
           <div className="flex shrink-0 items-center gap-1 md:hidden">
             <button
               type="button"
-              onClick={() => void shareSpace()}
+              onClick={() => shareSpace()}
               aria-label="Share space"
               title="Share space"
               className="mobile-icon-button !size-10"
@@ -1267,11 +1424,7 @@ export function ChatPanel({
         <div className="ml-11 mt-1 flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground md:hidden">
           <span className="size-1.5 shrink-0 rounded-full bg-emerald-400" />
           <span className="truncate">
-            {activeMembers.filter((name) => name !== (displayName.trim() || "Anonymous")).length > 0
-              ? activeMembers
-                  .filter((name) => name !== (displayName.trim() || "Anonymous"))
-                  .join(", ")
-              : "Only you here"}
+            {otherMemberNames.length > 0 ? otherMemberNames.join(", ") : "Only you here"}
           </span>
         </div>
 
@@ -1553,8 +1706,8 @@ export function ChatPanel({
             <span className="flex min-w-0 flex-1 items-center gap-1.5">
               <input
                 type="password"
-                value={roomPasswordInput}
-                onChange={(e) => setRoomPasswordInput(e.target.value)}
+                value={roomPasswordSettingInput}
+                onChange={(e) => setRoomPasswordSettingInput(e.target.value)}
                 placeholder="4+ chars, empty removes"
                 autoComplete="new-password"
                 maxLength={64}
@@ -1565,12 +1718,12 @@ export function ChatPanel({
                 onClick={() => {
                   void (async () => {
                     const { setSpacePassword } = await import("@/lib/heymama");
-                    const ok = await setSpacePassword(space.id, roomPasswordInput);
+                    const ok = await setSpacePassword(space.id, roomPasswordSettingInput);
                     toast[ok ? "success" : "error"](
                       ok ? "Room password updated" : "Couldn't update password",
                     );
                     if (ok) {
-                      setRoomPasswordInput("");
+                      setRoomPasswordSettingInput("");
                       setShowRoomPasswordBox(false);
                     }
                   })();
@@ -1625,23 +1778,7 @@ export function ChatPanel({
             mine={m.authorId === userId}
             allMessages={messages}
             currentUserId={userId}
-            onPollVote={(poll, option) => {
-              const voteText = `${POLL_VOTE_PREFIX}${poll.id}:${option}`;
-              const previousVote = [...messages]
-                .reverse()
-                .find(
-                  (candidate) =>
-                    candidate.authorId === userId &&
-                    candidate.text?.startsWith(`${POLL_VOTE_PREFIX}${poll.id}:`),
-                );
-              if (previousVote?.text === voteText) return;
-              void sendMessage({ spaceId: poll.spaceId, kind: "text", text: voteText }).then(
-                (sent) => {
-                  if (!sent)
-                    toast.error("Your poll vote could not be saved. Check your connection.");
-                },
-              );
-            }}
+            onPollVote={handlePollVote}
             onForward={onForward}
             onOpenImage={setLightbox}
             onPin={(message) => {
@@ -1652,11 +1789,7 @@ export function ChatPanel({
             onReply={handleReplyQuote}
             onOpenThread={(message) => setActiveThreadMessage(message)}
             isStarred={starredIds.has(m.id)}
-            onEdit={(message) => {
-              setReplyTo(null);
-              setEditing(message);
-              setText(message.text ?? "");
-            }}
+            onEdit={handleStartEdit}
             onDelete={(message) => {
               void handleDeleteForEveryone(message);
             }}
@@ -1970,6 +2103,7 @@ export function ChatPanel({
             <Plus className="size-5" />
           </button>
           <textarea
+            ref={composerRef}
             value={text}
             onChange={(e) => handleTyping(e.target.value)}
             onPaste={handleComposerPaste}
@@ -1980,7 +2114,8 @@ export function ChatPanel({
               }
             }}
             rows={1}
-            placeholder="Message..."
+            placeholder={editing ? "Edit message..." : replyTo ? `Replying to ${replyTo.authorName || "User"}...` : "Message..."}
+            aria-label={editing ? "Edit message" : "Message"}
             className="thin-scroll min-w-0 max-h-32 min-h-11 flex-1 basis-24 resize-none rounded-xl bg-card px-3 py-2.5 text-sm outline-none ring-1 ring-input focus:ring-primary"
           />
           <IconBtn
@@ -2225,6 +2360,9 @@ export function ChatPanel({
                     key={m.id}
                     message={m}
                     mine={m.authorId === userId}
+                    allMessages={messages}
+                    currentUserId={userId}
+                    onPollVote={handlePollVote}
                     onForward={onForward}
                     onOpenImage={setLightbox}
                     onPin={(message) => {
@@ -2233,13 +2371,15 @@ export function ChatPanel({
                       toast.success("Message pinned to top");
                     }}
                     onStar={toggleStar}
-                    onReply={handleReplyQuote}
+                    onReply={(message) => {
+                      // Close the overlay first so the reply chip + composer are visible.
+                      setShowStarredModal(false);
+                      handleReplyQuote(message);
+                    }}
                     isStarred={true}
                     onEdit={(message) => {
                       setShowStarredModal(false);
-                      setReplyTo(null);
-                      setEditing(message);
-                      setText(message.text ?? "");
+                      handleStartEdit(message);
                     }}
                     onDelete={(message) => {
                       void handleDeleteForEveryone(message);
@@ -2615,15 +2755,23 @@ export function ChatPanel({
                     key={m.id}
                     message={m}
                     mine={m.authorId === userId}
+                    allMessages={messages}
+                    currentUserId={userId}
+                    onPollVote={handlePollVote}
                     onForward={onForward}
                     onOpenImage={(url) => setLightbox(url)}
                     onPin={() => setPinnedMessage(m)}
                     onStar={(msg) => toggleStar(msg)}
-                    onReply={() => handleReplyQuote(m)}
+                    onReply={(msg) => {
+                      // Replying from inside a thread targets the main composer,
+                      // so close the drawer first (it covers the composer).
+                      setActiveThreadMessage(null);
+                      handleReplyQuote(msg);
+                    }}
                     isStarred={starredIds.has(m.id)}
                     onEdit={(msg) => {
-                      setReplyTo(null);
-                      setEditing(msg);
+                      setActiveThreadMessage(null);
+                      handleStartEdit(msg);
                     }}
                     onDelete={(msg) => void handleDeleteForEveryone(msg)}
                     onDeleteForMe={handleDeleteForMe}
@@ -2805,13 +2953,13 @@ function IconBtn({
 }: {
   children: React.ReactNode;
   label: string;
-  onClick: () => void;
+  onClick: () => void | Promise<void>;
   className?: string;
 }) {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={() => void onClick()}
       aria-label={label}
       title={label}
       className={
