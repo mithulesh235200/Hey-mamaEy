@@ -54,6 +54,7 @@ export type State = {
 };
 
 const PREFS_KEY = "heymamaey.prefs.v2";
+const READ_KEY = "heymamaey.readTimestamps.v1";
 
 const rand = (n: number) =>
   Array.from({ length: n }, () => Math.floor(Math.random() * 10)).join("");
@@ -144,7 +145,6 @@ function loadPrefs() {
   } catch {
     /* ignore */
   }
-
   try {
     // Validate permanent access key; regenerate if missing or invalid
     if (!prefs.permanentKey || !validatePermanentAccessKey(prefs.permanentKey).valid) {
@@ -162,6 +162,43 @@ function loadPrefs() {
   }
 
   savePrefs();
+}
+
+/* ---------- read receipts (persisted so badges survive reload) ---------- */
+
+function loadReadTimestamps(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(READ_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, number>;
+    const clean: Record<string, number> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "number" && Number.isFinite(value)) clean[key] = value;
+    }
+    return clean;
+  } catch {
+    return {};
+  }
+}
+
+function saveReadTimestamps(next: Record<string, number>) {
+  if (typeof window === "undefined") return;
+  try {
+    // Cap stored entries so the value can't grow without bound.
+    const keys = Object.keys(next);
+    let trimmed: Record<string, number> = next;
+    if (keys.length > 100) {
+      trimmed = {};
+      for (const k of keys.slice(-100)) {
+        const v = next[k];
+        if (typeof v === "number") trimmed[k] = v;
+      }
+    }
+    window.localStorage.setItem(READ_KEY, JSON.stringify(trimmed));
+  } catch {
+    /* ignore storage-denied contexts */
+  }
 }
 
 /* ---------- wire markers ---------- */
@@ -528,7 +565,12 @@ export function hydrate() {
 
   try {
     loadPrefs();
-    set({ userId: prefs.userId, displayName: prefs.displayName, ready: true });
+    set({
+      userId: prefs.userId,
+      displayName: prefs.displayName,
+      readTimestamps: loadReadTimestamps(),
+      ready: true,
+    });
     void (async () => {
       try {
         await loadSpaces();
@@ -962,12 +1004,20 @@ export function setTypingStatus(
 }
 
 export function markSpaceAsRead(spaceId: string) {
-  set({
-    readTimestamps: {
-      ...state.readTimestamps,
-      [spaceId]: Date.now(),
-    },
-  });
+  if (!spaceId) return;
+  // Cover client/server clock skew: never stamp an earlier time than the
+  // newest message we already hold for this space, or it would stay
+  // "unread" forever after a reload.
+  let newest = 0;
+  for (const m of state.messages) {
+    if (m.spaceId === spaceId && m.createdAt > newest) newest = m.createdAt;
+  }
+  const next = {
+    ...state.readTimestamps,
+    [spaceId]: Math.max(Date.now(), newest),
+  };
+  set({ readTimestamps: next });
+  saveReadTimestamps(next);
 }
 
 export async function markSpaceMessagesRead(spaceCode: string, readerId: string): Promise<boolean> {
@@ -1016,6 +1066,7 @@ export function setEphemeralDevice(on: boolean) {
 function wipeStoredIdentity() {
   try {
     window.localStorage.removeItem(PREFS_KEY);
+    window.localStorage.removeItem(READ_KEY);
   } catch {
     /* ignore */
   }
