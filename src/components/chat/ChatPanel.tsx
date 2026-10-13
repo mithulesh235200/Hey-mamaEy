@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ClipboardEvent } from "react";
 import { Capacitor } from "@capacitor/core";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -816,11 +816,12 @@ export function ChatPanel({
     }
   };
 
-  const handleFiles = async (files: FileList | null) => {
+  const handleFiles = async (files: FileList | File[] | null) => {
     if (!files) return;
     for (const file of Array.from(files)) {
+      const displayName = file.name || `pasted-image-${Date.now()}.png`;
       if (file.size > MAX_BYTES) {
-        toast.error(`${file.name} is too large (${formatBytes(file.size)})`, {
+        toast.error(`${displayName} is too large (${formatBytes(file.size)})`, {
           description: "Keep uploads under 20 MB, or use ⚡ P2P Direct Share for bigger files.",
         });
         continue;
@@ -835,21 +836,49 @@ export function ChatPanel({
         if (kind === "image") {
           const blob = await dataUrlToBlob(dataUrl);
           if (blob) {
-            remoteUrl = await uploadAttachment(space.code, blob, file.name, blob.type || file.type);
+            remoteUrl = await uploadAttachment(
+              space.code,
+              blob,
+              displayName,
+              blob.type || file.type,
+            );
           }
         } else {
-          remoteUrl = await uploadAttachment(space.code, file, file.name, file.type);
+          remoteUrl = await uploadAttachment(space.code, file, displayName, file.type);
         }
         await push(kind, {
           dataUrl: remoteUrl ?? dataUrl,
-          fileName: file.name,
+          fileName: displayName,
           fileSize: file.size,
           mimeType: file.type,
         });
       } catch {
-        toast.error(`Couldn't read ${file.name}`);
+        toast.error(`Couldn't read ${displayName}`);
       }
     }
+  };
+
+  // Lets users copy an image (screenshot, browser image, file) and paste it
+  // straight into the composer. Copied web images often appear only as
+  // clipboard items (not files), so both sources are checked. Plain-text
+  // pastes fall through to the default behavior untouched.
+  const handleComposerPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const clipboard = e.clipboardData;
+    if (!clipboard) return;
+    const pasted: File[] = [];
+    if (clipboard.files && clipboard.files.length > 0) {
+      pasted.push(...Array.from(clipboard.files));
+    } else if (clipboard.items) {
+      for (const item of Array.from(clipboard.items)) {
+        if (item.kind === "file") {
+          const f = item.getAsFile();
+          if (f) pasted.push(f);
+        }
+      }
+    }
+    if (pasted.length === 0) return;
+    e.preventDefault();
+    void handleFiles(pasted);
   };
 
   const handleP2PFileShare = async (files: FileList | null) => {
@@ -1882,6 +1911,7 @@ export function ChatPanel({
           <textarea
             value={text}
             onChange={(e) => handleTyping(e.target.value)}
+            onPaste={handleComposerPaste}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
