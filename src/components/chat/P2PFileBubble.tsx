@@ -161,8 +161,8 @@ export function P2PFileBubble({
         )}
 
         {progress.status === "failed" && (
-          <div className="w-full text-center text-[11px] font-semibold text-rose-400 bg-rose-500/10 rounded-xl py-1.5 border border-rose-500/20">
-            ⚠ Transfer Failed / Peer Disconnected
+          <div className="w-full text-center text-[11px] font-semibold text-rose-400 bg-rose-500/10 rounded-xl px-2 py-1.5 border border-rose-500/20 break-words">
+            ⚠ {progress.error || "Transfer Failed / Peer Disconnected"}
           </div>
         )}
       </div>

@@ -222,7 +222,7 @@ export function MessageBubble({
           }`}
         >
           {poll && (
-            <div className="min-w-56 space-y-2">
+            <div className="min-w-0 max-w-full space-y-2 break-words">
               <p className="text-sm font-semibold">{poll.question}</p>
               {poll.options.map((option, index) => {
                 const count = voteCounts[index] ?? 0;
@@ -349,6 +349,9 @@ export function MessageBubble({
                 <p className="text-[10px] opacity-90 font-medium">
                   {message.fileSize ? formatBytes(message.fileSize) : "Attachment"}
                 </p>
+                {!message.dataUrl && (
+                  <p className="text-[10px] italic opacity-70">File unavailable</p>
+                )}
               </div>
               {message.dataUrl && (
                 <button
@@ -433,7 +436,7 @@ export function MessageBubble({
         </div>
 
         {/* Message Actions */}
-        <div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex items-center gap-0.5 relative shrink-0">
+        <div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex flex-wrap items-center gap-0.5 relative shrink-0 max-w-full [&>button]:min-h-9 [&>button]:min-w-9">
           {message.text && (
             <button
               type="button"

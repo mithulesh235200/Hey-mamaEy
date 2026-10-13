@@ -344,8 +344,10 @@ export function MobileHome({
 
             <section className="mobile-spaces-section" aria-labelledby="mobile-spaces-title">
               <div className="mobile-spaces-heading">
-                <div>
-                  <h2 id="mobile-spaces-title">Recent spaces</h2>
+                <div className="min-w-0 flex-1">
+                  <h2 id="mobile-spaces-title" className="truncate">
+                    Recent spaces
+                  </h2>
                   <p>{spaces.length === 1 ? "1 space" : `${spaces.length} spaces`}</p>
                 </div>
                 {spaces.length > 0 && (
@@ -358,7 +360,12 @@ export function MobileHome({
                       placeholder="Search"
                     />
                     {query && (
-                      <button type="button" aria-label="Clear search" onClick={() => setQuery("")}>
+                      <button
+                        type="button"
+                        aria-label="Clear search"
+                        onClick={() => setQuery("")}
+                        className="flex min-h-10 min-w-10 items-center justify-center -m-2 p-2"
+                      >
                         <X className="size-4" aria-hidden="true" />
                       </button>
                     )}
@@ -381,8 +388,10 @@ export function MobileHome({
                           <Hash className="size-5" aria-hidden="true" />
                         </span>
                         <span className="min-w-0 flex-1 text-left">
-                          <span className="flex items-center gap-2">
-                            <span className="truncate text-sm font-semibold">{space.name}</span>
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className="min-w-0 flex-1 truncate text-sm font-semibold">
+                              {space.name}
+                            </span>
                             <span className="shrink-0 text-[11px] font-mono text-primary">
                               {space.hasPassword ? `🔒 ${space.code}` : space.code}
                             </span>

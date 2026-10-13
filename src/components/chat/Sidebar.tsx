@@ -142,7 +142,9 @@ export function Sidebar({
       return;
     }
     if (newPassword.trim() && newPassword.trim().length < 4) {
-      toast.error("Password too short", { description: "Room password must be 4+ characters, or empty for an open room." });
+      toast.error("Password too short", {
+        description: "Room password must be 4+ characters, or empty for an open room.",
+      });
       return;
     }
     try {
@@ -154,7 +156,9 @@ export function Sidebar({
       setNewName("");
       setNewPassword("");
       toast.success(
-        newMode === "quick" ? `Quick Space created — code ${space.code}` : `Private Space created — code ${space.code}`,
+        newMode === "quick"
+          ? `Quick Space created — code ${space.code}`
+          : `Private Space created — code ${space.code}`,
         {
           description:
             newMode === "quick"
@@ -189,7 +193,8 @@ export function Sidebar({
       const space = await joinSpace(cleanCode, joinPassword);
       if (!space || !space.id || !space.code) {
         toast.error("Invalid Space Code", {
-          description: "No Space exists with that code. Check the code (legacy 6/8-digit or new XXXX-XXXX-XXXX token) and try again.",
+          description:
+            "No Space exists with that code. Check the code (legacy 6/8-digit or new XXXX-XXXX-XXXX token) and try again.",
         });
         return;
       }
@@ -200,7 +205,9 @@ export function Sidebar({
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
       if (msg.includes("SPACE_PASSWORD_REQUIRED")) {
-        toast.error("Password required", { description: "This room is password-protected — enter its password." });
+        toast.error("Password required", {
+          description: "This room is password-protected — enter its password.",
+        });
         return;
       }
       if (msg.includes("SPACE_PASSWORD_INVALID")) {
@@ -284,7 +291,7 @@ export function Sidebar({
                 type="button"
                 onClick={() => setTheme(t.id)}
                 className={
-                  "flex items-center justify-center gap-1 rounded-lg py-1.5 text-[11px] font-medium transition-all " +
+                  "flex min-h-10 items-center justify-center gap-1 rounded-lg py-1.5 text-[11px] font-medium transition-all " +
                   (theme === t.id
                     ? "bg-primary text-primary-foreground font-semibold shadow-sm scale-102"
                     : "text-muted-foreground hover:text-foreground hover:bg-secondary/50")
@@ -340,7 +347,12 @@ export function Sidebar({
             className="mt-1 w-full rounded-lg bg-background px-2.5 py-2 text-sm outline-none ring-1 ring-input focus:ring-primary"
           />
           <p className="mt-2 text-[10px] uppercase tracking-wider text-muted-foreground">Your ID</p>
-          <p className="mt-0.5 font-mono text-sm font-semibold text-primary">{userId}</p>
+          <p
+            className="mt-0.5 truncate font-mono text-sm font-semibold text-primary"
+            title={userId}
+          >
+            {userId}
+          </p>
           <div className="mt-2 flex gap-2">
             <button
               type="button"
@@ -544,8 +556,10 @@ export function Sidebar({
                   <Hash className="size-4" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-1">
-                    <p className="truncate text-xs font-semibold text-foreground">{s.name}</p>
+                  <div className="flex min-w-0 items-center justify-between gap-1">
+                    <p className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">
+                      {s.name}
+                    </p>
                     <span className="shrink-0 font-mono text-[10px] text-primary">
                       {s.hasPassword ? `🔒 ${s.code}` : s.code}
                     </span>
@@ -566,7 +580,7 @@ export function Sidebar({
                   toast[ok ? "success" : "error"](ok ? `Left ${s.name}` : "Couldn't leave Space");
                 }}
                 aria-label={`Leave ${s.name}`}
-                className="opacity-0 group-hover:opacity-100 rounded-lg p-1.5 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive"
+                className="opacity-100 focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 rounded-lg p-1.5 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive min-h-9 min-w-9 inline-flex items-center justify-center"
               >
                 <LogOut className="size-3.5" />
               </button>

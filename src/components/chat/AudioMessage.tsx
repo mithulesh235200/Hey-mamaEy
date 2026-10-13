@@ -17,7 +17,14 @@ export function AudioMessage({ dataUrl, mine }: { dataUrl: string; mine?: boolea
     if (playing) {
       a.pause();
     } else {
-      void a.play();
+      try {
+        const p = a.play();
+        if (p && typeof (p as Promise<void>).catch === "function") {
+          (p as Promise<void>).catch(() => setPlaying(false));
+        }
+      } catch {
+        setPlaying(false);
+      }
     }
   };
 

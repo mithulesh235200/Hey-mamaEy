@@ -410,7 +410,8 @@ export function ChatPanel({
     if (messages.length === 0) {
       toast.error("No chat history to export");
       return;
-    }    let content = `=========================================\nHEY MAMAEY - CHAT EXPORT BACKUP\nSpace: ${space?.name} (Code: ${space?.code})\nExported: ${new Date().toLocaleString()}\n=========================================\n\n`;
+    }
+    let content = `=========================================\nHEY MAMAEY - CHAT EXPORT BACKUP\nSpace: ${space?.name} (Code: ${space?.code})\nExported: ${new Date().toLocaleString()}\n=========================================\n\n`;
 
     messages.forEach((m) => {
       const dateStr = new Date(m.createdAt).toLocaleString();
@@ -1106,7 +1107,7 @@ export function ChatPanel({
           <button
             type="button"
             onClick={onOpenSidebar}
-            className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-xs transition-opacity hover:opacity-90 md:hidden"
+            className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-xs transition-opacity hover:opacity-90 md:hidden"
             aria-label="Back to spaces"
           >
             <ChevronLeft className="size-4" />
@@ -1155,7 +1156,7 @@ export function ChatPanel({
               onClick={() => void shareSpace()}
               aria-label="Share space"
               title="Share space"
-              className="mobile-icon-button !size-9"
+              className="mobile-icon-button !size-10"
             >
               <Share2 className="size-4" />
             </button>
@@ -1164,7 +1165,7 @@ export function ChatPanel({
               onClick={() => setCallMode("voice")}
               aria-label="Start voice call"
               title="Voice call"
-              className="mobile-icon-button !size-9"
+              className="mobile-icon-button !size-10"
             >
               <Phone className="size-4" />
             </button>
@@ -1173,7 +1174,7 @@ export function ChatPanel({
               onClick={() => setCallMode("video")}
               aria-label="Start video call"
               title="Video call"
-              className="mobile-icon-button !size-9"
+              className="mobile-icon-button !size-10"
             >
               <Video className="size-4" />
             </button>
@@ -1183,7 +1184,7 @@ export function ChatPanel({
               aria-label={showMobileActions ? "Hide space actions" : "Show space actions"}
               aria-expanded={showMobileActions}
               title="More space actions"
-              className="mobile-icon-button !size-9"
+              className="mobile-icon-button !size-10"
             >
               <MoreHorizontal className="size-5" />
             </button>
@@ -1202,7 +1203,7 @@ export function ChatPanel({
         </div>
 
         <div
-          className={`${showMobileActions ? "grid grid-cols-5" : "hidden"} mt-3 gap-2 rounded-2xl border border-border bg-background/50 p-2 md:mt-0 md:flex md:flex-wrap md:gap-1 md:rounded-none md:border-0 md:bg-transparent md:p-0`}
+          className={`${showMobileActions ? "grid grid-cols-5" : "hidden"} mt-3 gap-2 rounded-2xl border border-border bg-background/50 p-2 [&>button]:min-h-10 [&>button]:min-w-10 md:mt-0 md:flex md:flex-wrap md:gap-1 md:rounded-none md:border-0 md:bg-transparent md:p-0`}
         >
           <button
             type="button"
@@ -1605,7 +1606,7 @@ export function ChatPanel({
         )}
       </div>
 
-      <footer className="border-t border-border bg-sidebar p-3">
+      <footer className="border-t border-border bg-sidebar p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
         <div className="mb-2 hidden items-center justify-between md:flex">
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
             {QUICK_EMOJIS.map((emoji) => (
@@ -1636,7 +1637,7 @@ export function ChatPanel({
               </button>
 
               {showGifsMenu && (
-                <div className="absolute right-0 bottom-8 z-40 w-64 rounded-2xl border border-border bg-card p-2 shadow-2xl animate-in zoom-in-95 duration-150 space-y-2">
+                <div className="absolute right-0 bottom-8 z-40 w-64 max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-card p-2 shadow-2xl animate-in zoom-in-95 duration-150 space-y-2">
                   <div className="px-2 py-0.5 text-[10px] uppercase font-bold text-muted-foreground">
                     GIFs & Animated Stickers
                   </div>
@@ -1710,7 +1711,7 @@ export function ChatPanel({
               </button>
 
               {showSnippetsMenu && (
-                <div className="absolute right-0 bottom-8 z-40 w-64 rounded-2xl border border-border bg-card p-2 shadow-2xl animate-in zoom-in-95 duration-150 space-y-1">
+                <div className="absolute right-0 bottom-8 z-40 w-64 max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-card p-2 shadow-2xl animate-in zoom-in-95 duration-150 space-y-1">
                   <div className="px-2 py-1 text-[10px] uppercase font-bold text-muted-foreground">
                     Quick Templates
                   </div>
@@ -1828,16 +1829,16 @@ export function ChatPanel({
                   setShowMobileAttachments(false);
                   item.action();
                 }}
-                className="flex min-h-11 items-center gap-2 rounded-xl border border-border bg-card px-3 text-xs font-medium"
+                className="flex min-h-12 items-center gap-2 rounded-xl border border-border bg-card px-3 text-center text-[11px] font-medium leading-tight break-words"
               >
                 {item.icon}
-                {item.label}
+                <span className="min-w-0 flex-1">{item.label}</span>
               </button>
             ))}
           </div>
         )}
-        <div className="flex items-end gap-2 md:flex-wrap">
-          <div className="hidden shrink-0 gap-1 md:flex">
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="hidden shrink-0 flex-wrap gap-1 md:flex">
             <IconBtn label="⚡ P2P Direct Share" onClick={() => p2pFileInputRef.current?.click()}>
               <Zap className="size-4 text-emerald-400" />
             </IconBtn>
@@ -1889,7 +1890,7 @@ export function ChatPanel({
             }}
             rows={1}
             placeholder="Message..."
-            className="thin-scroll min-w-0 max-h-32 min-h-11 flex-1 resize-none rounded-xl bg-card px-3 py-2.5 text-sm outline-none ring-1 ring-input focus:ring-primary md:min-w-[min(100%,12rem)]"
+            className="thin-scroll min-w-0 max-h-32 min-h-11 flex-1 basis-24 resize-none rounded-xl bg-card px-3 py-2.5 text-sm outline-none ring-1 ring-input focus:ring-primary"
           />
           <IconBtn
             label={recording ? "Stop recording" : "Record voice note"}
@@ -1953,7 +1954,7 @@ export function ChatPanel({
       {/* PIN Setup Modal */}
       {showPinSetup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-xs rounded-3xl bg-card border border-border p-5 shadow-2xl flex flex-col items-center text-center space-y-4">
+          <div className="w-full max-w-xs max-h-[90dvh] overflow-y-auto thin-scroll rounded-3xl bg-card border border-border p-5 shadow-2xl flex flex-col items-center text-center space-y-4">
             <div className="flex size-12 items-center justify-center rounded-full bg-primary/15 text-primary">
               <KeyRound className="size-6" />
             </div>
@@ -2021,14 +2022,14 @@ export function ChatPanel({
               </button>
             </div>
 
-            <div className="flex gap-1 border-b border-border py-2 text-xs">
+            <div className="flex gap-1 overflow-x-auto thin-scroll border-b border-border py-2 text-xs">
               {(["all", "image", "video", "audio", "file"] as MediaTab[]).map((tab) => (
                 <button
                   key={tab}
                   type="button"
                   onClick={() => setActiveMediaTab(tab)}
                   className={
-                    "rounded-lg px-3 py-1.5 capitalize font-medium transition-colors " +
+                    "rounded-lg px-3 py-1.5 capitalize font-medium transition-colors shrink-0 " +
                     (activeMediaTab === tab
                       ? "bg-primary text-primary-foreground font-bold"
                       : "text-muted-foreground hover:bg-secondary")
@@ -2051,11 +2052,11 @@ export function ChatPanel({
                       key={m.id}
                       className="relative group rounded-xl border border-border bg-background p-2 flex flex-col justify-between"
                     >
-                      {m.kind === "image" && (
+                      {m.kind === "image" && m.dataUrl && (
                         <img
                           src={m.dataUrl}
                           alt={m.fileName || "Shared photo"}
-                          onClick={() => setLightbox(m.dataUrl!)}
+                          onClick={() => m.dataUrl && setLightbox(m.dataUrl)}
                           className="h-28 w-full object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
                         />
                       )}
@@ -2308,7 +2309,7 @@ export function ChatPanel({
 
       {showPollModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-2xl bg-card border border-border p-5 shadow-2xl space-y-4">
+          <div className="w-full max-w-md max-h-[90dvh] overflow-y-auto thin-scroll rounded-2xl bg-card border border-border p-5 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <BarChart2 className="size-5 text-primary" />
@@ -2403,7 +2404,7 @@ export function ChatPanel({
             setActivePhotoFilter("none");
           }}
         >
-          <div className="absolute right-5 top-5 flex flex-wrap items-center gap-2">
+          <div className="absolute right-5 top-5 flex max-w-[calc(100vw-2.5rem)] flex-wrap items-center justify-end gap-2 overflow-x-auto">
             <div
               className="flex items-center gap-1 rounded-full bg-card px-2 py-1 shadow-xl border border-border"
               onClick={(e) => e.stopPropagation()}
@@ -2458,7 +2459,7 @@ export function ChatPanel({
         </div>
       )}
       {showSoundboard && (
-        <div className="absolute bottom-20 left-4 z-40 w-72 rounded-2xl border border-border bg-card p-3 shadow-2xl animate-in zoom-in-95 duration-150">
+        <div className="fixed bottom-24 left-4 z-40 w-72 max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-card p-3 shadow-2xl animate-in zoom-in-95 duration-150">
           <div className="flex items-center justify-between border-b border-border pb-2 mb-2">
             <div className="flex items-center gap-1.5 font-bold text-xs">
               <Music className="size-4 text-purple-400" />

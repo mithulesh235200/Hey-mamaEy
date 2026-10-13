@@ -6,13 +6,7 @@ import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import { MobileHome, type MobileTab } from "@/components/chat/MobileHome";
 import { Sidebar } from "@/components/chat/Sidebar";
-import {
-  hydrate,
-  joinSpace,
-  markSpaceAsRead,
-  useChatState,
-  type Message,
-} from "@/lib/heymama";
+import { hydrate, joinSpace, markSpaceAsRead, useChatState, type Message } from "@/lib/heymama";
 import { flushPushToken, initPushNotifications } from "@/lib/push";
 
 const ChatPanel = lazy(() =>
@@ -221,7 +215,7 @@ function Index() {
 
   return (
     <main className="flex h-screen h-[100dvh] overflow-hidden bg-background text-foreground">
-      <div className="hidden w-80 shrink-0 md:block border-r border-border">
+      <div className="hidden w-72 shrink-0 md:block border-r border-border lg:w-80">
         <Sidebar
           userId={state.userId}
           displayName={state.displayName}
