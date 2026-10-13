@@ -3,6 +3,8 @@
   "short_name": "Space Connect",
   "description": "Private, anonymous group messaging and media sharing using code passcodes without phone numbers or emails.",
   "start_url": "/",
+  "scope": "/",
+  "id": "/",
   "display": "standalone",
   "background_color": "#09090b",
   "theme_color": "#09090b",

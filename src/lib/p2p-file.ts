@@ -49,6 +49,27 @@ export type P2PProgressCallback = (info: P2PProgressInfo) => void;
 const activeSenders = new Map<string, P2PFileSenderSession>();
 const activeReceivers = new Map<string, P2PFileReceiverSession>();
 
+// Warn before the tab closes while a live P2P upload is in flight — closing
+// the page destroys the sender peer and the receiver can never get the file
+// (unless a server backup copy exists). Registered once, only while needed.
+let leaveGuardAttached = false;
+function refreshLeaveGuard() {
+  if (typeof window === "undefined") return;
+  const busy = [...activeSenders.values()].some(
+    (s) => s.getStatus() === "connecting" || s.getStatus() === "transferring",
+  );
+  if (busy && !leaveGuardAttached) {
+    leaveGuardAttached = true;
+    window.addEventListener("beforeunload", handleBeforeUnload);
+  } else if (!busy && leaveGuardAttached) {
+    leaveGuardAttached = false;
+    window.removeEventListener("beforeunload", handleBeforeUnload);
+  }
+}
+function handleBeforeUnload(e: BeforeUnloadEvent) {
+  e.preventDefault();
+}
+
 /**
  * P2P File Sender Session using WebRTC DataChannel
  */
@@ -76,6 +97,10 @@ export class P2PFileSenderSession {
     return () => this.listeners.delete(cb);
   }
 
+  public getStatus(): P2PTransferStatus {
+    return this.status;
+  }
+
   private notify(error?: string, blobUrl?: string) {
     const elapsed = (Date.now() - (this.startTime || Date.now())) / 1000;
     const speedMbps = elapsed > 0 ? (this.bytesSent * 8) / (elapsed * 1000000) : 0;
@@ -94,6 +119,7 @@ export class P2PFileSenderSession {
       ...(error !== undefined && { error }),
     };
     this.listeners.forEach((fn) => fn(info));
+    refreshLeaveGuard();
   }
 
   public async start() {
@@ -264,6 +290,7 @@ export class P2PFileSenderSession {
       this.channel = null;
     }
     activeSenders.delete(this.transferId);
+    refreshLeaveGuard();
   }
 }
 

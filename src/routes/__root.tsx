@@ -119,12 +119,41 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
   useEffect(() => {
-    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    // Capacitor native apps serve bundled files locally — no SW needed, and
+    // some WebViews don't support it. Guard instead of throwing.
+    try {
+      const isNative =
+        typeof window !== "undefined" &&
+        (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })
+          ?.Capacitor?.isNativePlatform?.() === true;
+      if (isNative) return;
+    } catch {
+      /* fall through to web registration */
+    }
+    const register = () => {
       navigator.serviceWorker
         .register("/sw.js")
-        .then(() => console.log("Space Connect Service Worker registered."))
+        .then((registration) => {
+          // Pick up SW updates without forcing a reload loop.
+          if (registration.waiting) {
+            registration.waiting.postMessage("SKIP_WAITING");
+          }
+          registration.addEventListener("updatefound", () => {
+            const worker = registration.installing;
+            if (!worker) return;
+            worker.addEventListener("statechange", () => {
+              if (worker.state === "installed" && navigator.serviceWorker.controller) {
+                worker.postMessage("SKIP_WAITING");
+              }
+            });
+          });
+        })
         .catch((err) => console.error("Service worker registration failed:", err));
-    }
+    };
+    if (document.readyState === "complete") register();
+    else window.addEventListener("load", register, { once: true });
+    return () => window.removeEventListener("load", register);
   }, []);
 
   return (

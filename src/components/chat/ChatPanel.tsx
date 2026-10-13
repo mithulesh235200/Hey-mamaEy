@@ -46,6 +46,7 @@ import {
   Trash2,
   Bell,
   BellOff,
+  WifiOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -61,6 +62,8 @@ import {
   leaveSpace,
   markSpaceMessagesRead,
   markSpaceAsRead,
+  isOffline,
+  useOnline,
   THREAD_MARKER,
   type MediaKind,
   type Message,
@@ -932,11 +935,20 @@ export function ChatPanel({
     kind: MediaKind,
     extra: Partial<Omit<Message, "id" | "createdAt" | "authorId" | "authorName">>,
   ) => {
+    const offline = isOffline();
     const ok = await sendMessage({ spaceId: space.id, kind, ...extra });
     if (ok) {
-      playChime("send", mutedSound || !soundEffectsEnabled);
+      if (offline) {
+        toast.info("Saved offline — will send when you reconnect");
+      } else {
+        playChime("send", mutedSound || !soundEffectsEnabled);
+      }
     } else {
-      toast.error("Message failed to send — check your connection");
+      toast.error(
+        isOffline()
+          ? "You're offline — files and media need a connection"
+          : "Message failed to send — check your connection",
+      );
     }
   };
 
@@ -979,11 +991,20 @@ export function ChatPanel({
       : value;
     const ok = await sendMessage({ spaceId: space.id, kind: "text", text: outgoing });
     if (ok) {
+      const queued = isOffline();
       setText("");
       setReplyTo(null);
-      playChime("send", mutedSound || !soundEffectsEnabled);
+      if (queued) {
+        toast.info("Saved offline — will send when you reconnect");
+      } else {
+        playChime("send", mutedSound || !soundEffectsEnabled);
+      }
     } else {
-      toast.error("Message failed to send — check your connection");
+      toast.error(
+        isOffline()
+          ? "You're offline — message not sent"
+          : "Message failed to send — check your connection",
+      );
     }
   };
 
@@ -1003,13 +1024,18 @@ export function ChatPanel({
       validOptions.map((opt, i) => `${i + 1}. ${opt.trim()}`).join("\n");
     const ok = await sendMessage({ spaceId: space.id, kind: "text", text: pollText });
     if (ok) {
-      toast.success("Poll created!");
+      const queued = isOffline();
       setShowPollModal(false);
       setPollQuestion("");
       setPollOptions(["", ""]);
-      playChime("send", mutedSound || !soundEffectsEnabled);
+      if (queued) {
+        toast.info("Poll saved offline — will post on reconnect");
+      } else {
+        toast.success("Poll created!");
+        playChime("send", mutedSound || !soundEffectsEnabled);
+      }
     } else {
-      toast.error("Couldn't create poll");
+      toast.error(isOffline() ? "You're offline — poll not saved" : "Couldn't create poll");
     }
   };
 
@@ -1095,16 +1121,43 @@ export function ChatPanel({
       const sender = createP2PSender(transferId, file, userId);
       void sender.start();
 
+      // Hybrid reliability: pure P2P dies the moment the sender closes the
+      // tab, so also stash a server-side backup copy when the file fits.
+      // The chat message carries it as `dataUrl`; receivers download from the
+      // server when the sender is offline, and use live P2P otherwise.
+      // Large files that don't fit still send P2P-only with a keep-tab warning.
+      let backupUrl: string | undefined;
+      if (file.size <= MAX_BYTES) {
+        try {
+          toast.info(`Uploading backup copy of ${file.name}...`, {
+            description: "So it stays downloadable even if you go offline.",
+          });
+          backupUrl = (await uploadAttachment(space.code, file, file.name, file.type)) ?? undefined;
+        } catch {
+          backupUrl = undefined;
+        }
+      }
+
       await push("p2p_file", {
         p2pTransferId: transferId,
         p2pFileName: file.name,
         p2pFileSize: file.size,
         p2pMimeType: file.type || "application/octet-stream",
+        ...(backupUrl !== undefined && { dataUrl: backupUrl }),
         text: `⚡ P2P Direct Stream: ${file.name} (${formatBytes(file.size)})`,
       });
-      toast.success(`Started P2P Direct Share for ${file.name}!`, {
-        description: "Zero server storage — file streams directly browser-to-browser.",
-      });
+      if (backupUrl) {
+        toast.success(`Shared ${file.name}!`, {
+          description: "Live P2P + server backup — stays downloadable if you leave.",
+        });
+      } else {
+        toast.success(`Started P2P Direct Share for ${file.name}!`, {
+          description:
+            file.size > MAX_BYTES
+              ? "Too large for server backup — keep this tab open until they accept, or the file is lost."
+              : "Live P2P stream — keep this tab open until they accept.",
+        });
+      }
     }
   };
 
@@ -1263,6 +1316,7 @@ export function ChatPanel({
   const typingArray = typingIndicatorsEnabled ? [...typingUsers.values()] : [];
   const otherMembers = activeMembers.filter((m) => m.userId !== userId);
   const otherMemberNames = [...new Set(otherMembers.map((m) => m.name))];
+  const online = useOnline();
 
   const getWallpaperStyle = () => {
     if (wallpaper === "dots") {
@@ -1649,6 +1703,16 @@ export function ChatPanel({
           </div>
         )}
       </header>
+
+      {!online && (
+        <div
+          role="status"
+          className="flex items-center justify-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-1.5 text-[11px] font-semibold text-amber-300"
+        >
+          <WifiOff className="size-3.5" />
+          <span>You&apos;re offline — showing saved chats. Text will queue and send on reconnect.</span>
+        </div>
+      )}
 
       {lockedCount > 0 && (
         <div className="flex flex-col gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs">

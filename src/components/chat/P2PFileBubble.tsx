@@ -1,19 +1,20 @@
 import { useEffect, useState } from "react";
-import { Download, FileIcon, HardDrive, ShieldCheck, Zap } from "lucide-react";
+import { CloudDownload, Download, FileIcon, HardDrive, ShieldCheck, Zap } from "lucide-react";
+import { toast } from "sonner";
 import { Message } from "@/lib/heymama";
+import { saveAttachmentToDevice } from "@/lib/attachments";
 import {
   createP2PReceiver,
-  createP2PSender,
   getActiveP2PReceiver,
   getActiveP2PSender,
   P2PProgressInfo,
 } from "@/lib/p2p-file";
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
+  if (!bytes || bytes <= 0) return "0 B";
   const k = 1024;
   const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const i = Math.min(sizes.length - 1, Math.floor(Math.log(bytes) / Math.log(k)));
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
@@ -28,6 +29,10 @@ export function P2PFileBubble({
   const transferId = message.p2pTransferId || message.id;
   const fileName = message.p2pFileName || message.fileName || "P2P_File";
   const fileSize = message.p2pFileSize || message.fileSize || 0;
+  // Server-side backup copy (hybrid reliability). Present when the sender's
+  // file fit the upload limit — works even if the sender went offline.
+  const backupUrl = message.dataUrl;
+  const hasBackup = Boolean(backupUrl);
 
   const [progress, setProgress] = useState<P2PProgressInfo>({
     transferId,
@@ -38,6 +43,7 @@ export function P2PFileBubble({
     speedMbps: 0,
     fileName,
   });
+  const [savingBackup, setSavingBackup] = useState(false);
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
@@ -76,6 +82,27 @@ export function P2PFileBubble({
     document.body.removeChild(a);
   };
 
+  const handleBackupDownload = async () => {
+    if (!backupUrl || savingBackup) return;
+    setSavingBackup(true);
+    try {
+      const result = await saveAttachmentToDevice(backupUrl, fileName);
+      if (result.ok) {
+        if (!result.shared) toast.success("Saved to your device!");
+      } else {
+        toast.error("Couldn't save yet — file opened in a new tab", {
+          description: "Long-press / right-click the file and choose Save.",
+        });
+      }
+    } finally {
+      setSavingBackup(false);
+    }
+  };
+
+  const showWaitingForReceiver =
+    isSender && (progress.status === "idle" || progress.status === "connecting");
+  const p2pFailed = progress.status === "failed" || progress.status === "cancelled";
+
   return (
     <div className="my-1.5 w-full max-w-sm rounded-2xl border border-emerald-500/30 bg-card/95 p-3.5 shadow-lg backdrop-blur-md transition-all">
       {/* Header Badge */}
@@ -86,7 +113,7 @@ export function P2PFileBubble({
         </div>
         <div className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
           <ShieldCheck className="h-3 w-3" />
-          <span>Zero Server Storage</span>
+          <span>{hasBackup ? "P2P + Backup" : "Zero Server Storage"}</span>
         </div>
       </div>
 
@@ -133,9 +160,21 @@ export function P2PFileBubble({
       )}
 
       {/* Actions */}
-      <div className="mt-2 flex items-center justify-end">
+      <div className="mt-2 flex flex-col gap-2">
+        {showWaitingForReceiver && (
+          <div className="w-full rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-2 py-1.5 text-center text-[11px] font-semibold text-emerald-300">
+            ⏳ Waiting for receiver to accept…
+            <span className="mt-0.5 block font-normal text-emerald-200/80">
+              {hasBackup
+                ? "Backup copy is already saved — they can download even if you leave."
+                : "Keep this tab open until they accept, or the file is lost."}
+            </span>
+          </div>
+        )}
+
         {!isSender && progress.status === "idle" && (
           <button
+            type="button"
             onClick={handleStartReceive}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-3.5 py-2 text-xs font-bold text-white shadow-md hover:from-emerald-500 hover:to-teal-500 transition-all active:scale-[0.98]"
           >
@@ -146,6 +185,7 @@ export function P2PFileBubble({
 
         {!isSender && progress.status === "completed" && progress.blobUrl && (
           <button
+            type="button"
             onClick={handleDownload}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-bold text-emerald-950 shadow-md hover:bg-emerald-400 transition-all active:scale-[0.98]"
           >
@@ -160,10 +200,39 @@ export function P2PFileBubble({
           </div>
         )}
 
-        {progress.status === "failed" && (
+        {p2pFailed && (
           <div className="w-full text-center text-[11px] font-semibold text-rose-400 bg-rose-500/10 rounded-xl px-2 py-1.5 border border-rose-500/20 break-words">
-            ⚠ {progress.error || "Transfer Failed / Peer Disconnected"}
+            ⚠{" "}
+            {hasBackup
+              ? `${progress.error || "Sender offline"} — use the saved copy below.`
+              : progress.error || "Transfer Failed / Peer Disconnected"}
+            {!hasBackup && !isSender && (
+              <span className="mt-0.5 block font-normal text-rose-300/90">
+                The sender left or is unreachable. Ask them to keep the chat open and resend.
+              </span>
+            )}
           </div>
+        )}
+
+        {/* Server backup copy: works even when the sender has left the page. */}
+        {hasBackup && progress.status !== "completed" && (
+          <button
+            type="button"
+            onClick={() => void handleBackupDownload()}
+            disabled={savingBackup}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-sky-500/30 bg-sky-500/10 px-3.5 py-2 text-xs font-bold text-sky-300 shadow-sm hover:bg-sky-500/20 transition-all active:scale-[0.98] disabled:opacity-60"
+          >
+            <CloudDownload className="h-4 w-4" />
+            <span>
+              {savingBackup
+                ? "Saving backup copy…"
+                : isSender
+                  ? "Download backup copy (server)"
+                  : p2pFailed || progress.status === "idle"
+                    ? "Download saved copy — sender offline OK"
+                    : "Download saved copy (server)"}
+            </span>
+          </button>
         )}
       </div>
     </div>

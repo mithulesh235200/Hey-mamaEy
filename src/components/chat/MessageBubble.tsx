@@ -502,9 +502,17 @@ export function MessageBubble({
             }`}
           >
             {message.editedAt && <span className="italic opacity-80">(edited)</span>}
+            {message.queued && (
+              <span
+                title="Saved offline — will send when you reconnect"
+                className="rounded-full bg-amber-500/20 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-amber-300"
+              >
+                Queued
+              </span>
+            )}
             <span>{timeStr}</span>
             {isStarred && <Star className="size-3 text-amber-400 fill-amber-400" />}
-            {mine && (
+            {mine && !message.queued && (
               <span
                 title={message.isRead ? "Seen" : "Sent"}
                 aria-label={message.isRead ? "Seen" : "Sent"}

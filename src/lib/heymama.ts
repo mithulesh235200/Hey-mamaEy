@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { clearRoomPassword } from "./roomCrypto";
 
@@ -30,6 +30,8 @@ export type Message = {
   createdAt: number;
   /** True when the payload is E2E-encrypted but could not be decrypted (missing/wrong room password). */
   locked?: boolean;
+  /** True for offline-queued messages waiting to be sent on reconnect. */
+  queued?: boolean;
 };
 
 export type Space = {
@@ -57,6 +59,182 @@ export type State = {
 const PREFS_KEY = "heymamaey.prefs.v2";
 const READ_KEY = "heymamaey.readTimestamps.v1";
 const HIDDEN_KEY = "heymamaey.hiddenForMe.v1";
+const OFFLINE_SNAPSHOT_KEY = "heymamaey.offlineCache.v1";
+const OUTBOX_KEY = "heymamaey.outbox.v1";
+const MAX_SNAPSHOT_MESSAGES = 300;
+const MAX_OUTBOX_ENTRIES = 50;
+
+/** True when the browser reports no network (web + installed PWA + WebView). */
+export function isOffline(): boolean {
+  try {
+    return typeof navigator !== "undefined" && navigator.onLine === false;
+  } catch {
+    return false;
+  }
+}
+
+/** Reactive online/offline flag for banners and send behavior. */
+export function useOnline(): boolean {
+  const [online, setOnline] = useState(
+    () => typeof navigator === "undefined" || navigator.onLine !== false,
+  );
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+    };
+  }, []);
+  return online;
+}
+
+/* ---------- offline snapshot (open the app with no network) ---------- */
+
+type OfflineSnapshot = { spaces: Space[]; messages: Message[]; savedAt: number };
+
+function loadOfflineSnapshot(): OfflineSnapshot | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(OFFLINE_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<OfflineSnapshot>;
+    if (!Array.isArray(parsed.spaces) || !Array.isArray(parsed.messages)) return null;
+    return {
+      spaces: parsed.spaces.filter((s) => s && typeof s.id === "string" && typeof s.code === "string"),
+      messages: parsed.messages.filter((m) => m && typeof m.id === "string" && typeof m.spaceId === "string"),
+      savedAt: typeof parsed.savedAt === "number" ? parsed.savedAt : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistOfflineSnapshot() {
+  if (typeof window === "undefined") return;
+  try {
+    // Keep the cache small: recent messages only, and drop giant inline
+    // base64 payloads (remote Supabase URLs are tiny strings — kept as-is).
+    const recent = state.messages.slice(-MAX_SNAPSHOT_MESSAGES).map((m) => {
+      if (m.dataUrl && m.dataUrl.startsWith("data:") && m.dataUrl.length > 150000) {
+        const { dataUrl: _dropped, ...rest } = m;
+        return rest;
+      }
+      return m;
+    });
+    const snapshot: OfflineSnapshot = {
+      spaces: state.spaces,
+      messages: recent,
+      savedAt: Date.now(),
+    };
+    window.localStorage.setItem(OFFLINE_SNAPSHOT_KEY, JSON.stringify(snapshot));
+  } catch {
+    /* storage full/denied — offline cache is best-effort */
+  }
+}
+
+function restoreOfflineSnapshot(): boolean {
+  const snapshot = loadOfflineSnapshot();
+  if (!snapshot || (snapshot.spaces.length === 0 && snapshot.messages.length === 0)) return false;
+  set({ spaces: snapshot.spaces, messages: snapshot.messages });
+  return true;
+}
+
+/* ---------- offline outbox (queue text while offline, flush on reconnect) ---------- */
+
+type OutboxEntry = {
+  tempId: string;
+  spaceId: string;
+  text: string;
+  threadParentId?: string;
+  createdAt: number;
+};
+
+function loadOutboxEntries(): OutboxEntry[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(OUTBOX_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (e): e is OutboxEntry =>
+        Boolean(e) &&
+        typeof (e as OutboxEntry).tempId === "string" &&
+        typeof (e as OutboxEntry).spaceId === "string" &&
+        typeof (e as OutboxEntry).text === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveOutboxEntries(entries: OutboxEntry[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(OUTBOX_KEY, JSON.stringify(entries.slice(-MAX_OUTBOX_ENTRIES)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function queueOfflineTextMessage(msg: {
+  spaceId: string;
+  text: string;
+  threadParentId?: string;
+}): boolean {
+  const space = state.spaces.find((s) => s.id === msg.spaceId);
+  if (!space) return false;
+  const tempId = `queued_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  const entry: OutboxEntry = {
+    tempId,
+    spaceId: msg.spaceId,
+    text: msg.text,
+    ...(msg.threadParentId !== undefined && { threadParentId: msg.threadParentId }),
+    createdAt: Date.now(),
+  };
+  const optimistic: Message = {
+    id: tempId,
+    spaceId: msg.spaceId,
+    authorId: state.userId,
+    authorName: state.displayName,
+    kind: "text",
+    text: msg.text,
+    ...(msg.threadParentId !== undefined && { threadParentId: msg.threadParentId }),
+    createdAt: entry.createdAt,
+    queued: true,
+  };
+  const outbox = [...loadOutboxEntries(), entry];
+  saveOutboxEntries(outbox);
+  set({ messages: [...state.messages, optimistic] });
+  persistOfflineSnapshot();
+  return true;
+}
+
+/** Sends queued offline messages in order. Runs on reconnect + after syncs. */
+export async function flushOutbox(): Promise<void> {
+  if (typeof window === "undefined" || isOffline()) return;
+  const entries = loadOutboxEntries();
+  if (entries.length === 0) return;
+  for (const entry of entries) {
+    try {
+      const ok = await insertMessage({
+        spaceId: entry.spaceId,
+        kind: "text",
+        text: entry.text,
+        ...(entry.threadParentId !== undefined && { threadParentId: entry.threadParentId }),
+      });
+      if (!ok) break; // still offline / failing — retry on next reconnect
+      saveOutboxEntries(loadOutboxEntries().filter((e) => e.tempId !== entry.tempId));
+      set({ messages: state.messages.filter((m) => m.id !== entry.tempId) });
+    } catch {
+      break;
+    }
+  }
+  persistOfflineSnapshot();
+}
 
 const rand = (n: number) =>
   Array.from({ length: n }, () => Math.floor(Math.random() * 10)).join("");
@@ -524,16 +702,32 @@ async function loadSpaces() {
   // users on the startup screen.
   set({ ready: true });
 
+  // Fully offline: serve the last saved snapshot so the app opens with the
+  // user's spaces + recent messages, then drain any queued sends on reconnect.
+  if (isOffline()) {
+    restoreOfflineSnapshot();
+    return;
+  }
+
   // Advertise the memberships this device knows about (heals legacy/silent
   // spaces for future restores on other devices). Fire-and-forget.
   backfillMemberships();
 
   if (prefs.userId && prefs.codes.length === 0) {
-    await syncUserSpacesFromCloud(prefs.userId);
+    try {
+      await syncUserSpacesFromCloud(prefs.userId);
+    } catch {
+      /* offline mid-sync — snapshot below covers the UI */
+    }
   }
 
   if (prefs.codes.length === 0) {
-    set({ spaces: [], messages: [] });
+    const snapshot = loadOfflineSnapshot();
+    if (snapshot && snapshot.spaces.length > 0) {
+      restoreOfflineSnapshot();
+    } else {
+      set({ spaces: [], messages: [] });
+    }
     return;
   }
 
@@ -561,6 +755,15 @@ async function loadSpaces() {
     const messageLists = await Promise.all(spaces.map((s) => fetchMessages(s.code)));
     const validMessages = filterRetained(messageLists.flat());
 
+    // Empty fetch while we hold a snapshot usually means the network dropped
+    // mid-sync — keep showing the saved data instead of blanking the app.
+    if (spaces.length === 0 && validMessages.length === 0) {
+      if (restoreOfflineSnapshot()) {
+        void flushOutbox();
+        return;
+      }
+    }
+
     set({
       spaces,
       messages: validMessages,
@@ -569,8 +772,11 @@ async function loadSpaces() {
       activeSpaceId:
         state.activeSpaceId && ids.includes(state.activeSpaceId) ? state.activeSpaceId : null,
     });
+    persistOfflineSnapshot();
+    void flushOutbox();
   } catch {
     // Keep the application usable if a network request is interrupted.
+    restoreOfflineSnapshot();
     set({ ready: true });
   }
 }
@@ -578,11 +784,17 @@ async function loadSpaces() {
 async function refreshActiveSpace() {
   const active = state.spaces.find((s) => s.id === state.activeSpaceId);
   if (!active) return;
-  const currentRetained = filterRetained(state.messages);
+  if (isOffline()) return;
+  const currentRetained = filterRetained(state.messages.filter((m) => !m.queued));
   const fresh = filterRetained(await fetchMessages(active.code));
   set({
-    messages: [...currentRetained.filter((message) => message.spaceId !== active.id), ...fresh],
+    messages: [
+      ...currentRetained.filter((message) => message.spaceId !== active.id),
+      ...state.messages.filter((m) => m.queued && m.spaceId === active.id),
+      ...fresh,
+    ],
   });
+  persistOfflineSnapshot();
 }
 
 export function hydrate() {
@@ -621,12 +833,18 @@ export function hydrate() {
       hiddenMessageIds: loadHiddenIds(),
       ready: true,
     });
+    // Show the last saved chats instantly so the app opens offline; the
+    // network sync below refreshes them when possible.
+    restoreOfflineSnapshot();
     void (async () => {
       try {
         await loadSpaces();
       } catch {
+        restoreOfflineSnapshot();
         set({ ready: true });
       }
+      // Never attempt an invite join with no network — it always fails.
+      if (isOffline()) return;
       const inviteCode = new URLSearchParams(window.location.search).get("space");
       if (!inviteCode) return;
 
@@ -636,7 +854,16 @@ export function hydrate() {
       }
     })();
   } catch {
+    restoreOfflineSnapshot();
     set({ ready: true });
+  }
+
+  if (!onlineListenerAttached) {
+    onlineListenerAttached = true;
+    window.addEventListener("online", () => {
+      void flushOutbox();
+      void refreshActiveSpace();
+    });
   }
 
   if (!pollTimer) {
@@ -746,6 +973,7 @@ export async function joinSpace(rawCode: string, password = ""): Promise<Space |
     messages: [...state.messages, ...history.filter((m) => !existingIds.has(m.id))],
     activeSpaceId: space.id,
   });
+  persistOfflineSnapshot();
   return space;
 }
 
@@ -777,6 +1005,7 @@ export async function unlockSpaceMessages(code: string, password: string): Promi
   set({
     messages: [...state.messages.filter((m) => m.spaceId !== space.id), ...fresh],
   });
+  persistOfflineSnapshot();
 }
 
 export function leaveSpace(spaceId: string): boolean {
@@ -795,6 +1024,7 @@ export function leaveSpace(spaceId: string): boolean {
     messages: state.messages.filter((m) => m.spaceId !== spaceId),
     activeSpaceId: state.activeSpaceId === spaceId ? null : state.activeSpaceId,
   });
+  persistOfflineSnapshot();
   return Boolean(space);
 }
 
@@ -817,6 +1047,19 @@ export function setActiveSpace(spaceId: string | null) {
 async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" | "authorName">) {
   const space = state.spaces.find((s) => s.id === msg.spaceId);
   if (!space) return false;
+
+  // Offline: queue plain text (chat, polls, votes, thread replies) locally
+  // and report success — flushOutbox sends them on reconnect. Attachments
+  // (dataUrl blobs) need the network and correctly report failure.
+  const queueableOffline =
+    msg.kind === "text" && msg.dataUrl === undefined && typeof msg.text === "string";
+  if (queueableOffline && isOffline()) {
+    return queueOfflineTextMessage({
+      spaceId: msg.spaceId,
+      text: msg.text as string,
+      ...(msg.threadParentId !== undefined && { threadParentId: msg.threadParentId }),
+    });
+  }
 
   // Wire encoding: the RPC rejects non-classic kinds, so location & P2P
   // invites travel inside the legacy text/file columns (see markers above).
@@ -881,8 +1124,17 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
     if (!state.messages.some((m) => m.id === saved.id)) {
       set({ messages: [...state.messages, saved] });
     }
+    persistOfflineSnapshot();
     return true;
   } catch {
+    // Network dropped mid-send: queue text so it isn't lost, fail attachments.
+    if (queueableOffline) {
+      return queueOfflineTextMessage({
+        spaceId: msg.spaceId,
+        text: msg.text as string,
+        ...(msg.threadParentId !== undefined && { threadParentId: msg.threadParentId }),
+      });
+    }
     return false;
   }
 }
@@ -937,6 +1189,7 @@ export async function editMessage(messageId: string, spaceId: string, text: stri
   if (!row) return null;
   const edited = await decryptIfNeeded(toMessage(row), space.code);
   set({ messages: state.messages.map((item) => (item.id === edited.id ? edited : item)) });
+  persistOfflineSnapshot();
   return edited;
 }
 
@@ -950,6 +1203,7 @@ export async function deleteMessage(messageId: string, spaceId: string) {
   });
   if (error || data !== true) return false;
   set({ messages: state.messages.filter((item) => item.id !== messageId) });
+  persistOfflineSnapshot();
   return true;
 }
 
@@ -1124,6 +1378,7 @@ function wipeStoredIdentity() {
 }
 
 let ephemeralListenerAttached = false;
+let onlineListenerAttached = false;
 
 /** Irreversibly forgets this device's identity key (app preferences are kept). */
 export function forgetIdentity() {
