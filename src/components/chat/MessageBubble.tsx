@@ -492,6 +492,23 @@ export function MessageBubble({
               mine ? "text-primary-foreground/85" : "text-muted-foreground"
             }`}
           >
+            {message.verified === false && (
+              <span
+                title="Signature invalid — this message may not be from the shown author"
+                className="rounded-full bg-amber-500/20 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-amber-300"
+              >
+                ⚠ Unverified
+              </span>
+            )}
+            {message.verified === true && !mine && (
+              <span
+                title="Verified author signature"
+                aria-label="Verified author"
+                className="opacity-80"
+              >
+                <CheckCheck className="size-3 text-emerald-400" />
+              </span>
+            )}
             {message.editedAt && <span className="italic opacity-80">(edited)</span>}
             {message.queued && (
               <span

@@ -13,6 +13,10 @@ export type Contact = {
   /** Linked 1:1 space code (empty until the first chat/invite). */
   spaceCode?: string;
   addedAt: number;
+  /** Pinned identity-key fingerprint (trust-on-first-use, Phase 2). */
+  keyprint?: string;
+  /** True when a verified message arrived under a DIFFERENT pinned key. */
+  keyChanged?: boolean;
 };
 
 const CONTACTS_KEY = "heymamaey.contacts.v1";
@@ -47,11 +51,17 @@ function loadContacts(): Contact[] {
       if (!id || !nickname) continue;
       const spaceCode =
         typeof c.spaceCode === "string" && c.spaceCode.trim() ? c.spaceCode.trim() : undefined;
+      const keyprint =
+        typeof c.keyprint === "string" && /^[A-Z2-7]{4}(-[A-Z2-7]{4}){3}$/.test(c.keyprint)
+          ? c.keyprint
+          : undefined;
       out.push({
         id,
         nickname,
         ...(spaceCode !== undefined && { spaceCode }),
         addedAt: typeof c.addedAt === "number" ? c.addedAt : Date.now(),
+        ...(keyprint !== undefined && { keyprint }),
+        ...(c.keyChanged === true && { keyChanged: true as const }),
       });
       if (out.length >= MAX_CONTACTS) break;
     }
@@ -97,17 +107,23 @@ export function useContacts(): Contact[] {
 }
 
 /** Portable snapshot for the access-key backup payload. */
-export function exportContacts(): { id: string; nickname: string; spaceCode?: string }[] {
+export function exportContacts(): {
+  id: string;
+  nickname: string;
+  spaceCode?: string;
+  keyprint?: string;
+}[] {
   return contacts.map((c) => ({
     id: c.id,
     nickname: c.nickname,
     ...(c.spaceCode !== undefined && { spaceCode: c.spaceCode }),
+    ...(c.keyprint !== undefined && { keyprint: c.keyprint }),
   }));
 }
 
 /** Merge backup contacts in: add missing, fill gaps, never clobber local edits. */
 export function mergeContacts(
-  incoming: { id?: unknown; nickname?: unknown; spaceCode?: unknown }[],
+  incoming: { id?: unknown; nickname?: unknown; spaceCode?: unknown; keyprint?: unknown }[],
 ): number {
   if (!Array.isArray(incoming) || incoming.length === 0) return 0;
   const byId = new Map(contacts.map((c) => [c.id, c]));
@@ -124,6 +140,11 @@ export function mergeContacts(
       ((raw as { spaceCode?: string }).spaceCode ?? "").trim()
         ? ((raw as { spaceCode?: string }).spaceCode ?? "").trim()
         : undefined;
+    const keyprint =
+      typeof (raw as { keyprint?: unknown }).keyprint === "string" &&
+      /^[A-Z2-7]{4}(-[A-Z2-7]{4}){3}$/.test((raw as { keyprint?: string }).keyprint ?? "")
+        ? ((raw as { keyprint?: string }).keyprint as string)
+        : undefined;
     const existing = byId.get(id);
     if (!existing) {
       if (!nickname) continue;
@@ -131,11 +152,15 @@ export function mergeContacts(
         id,
         nickname,
         ...(spaceCode !== undefined && { spaceCode }),
+        ...(keyprint !== undefined && { keyprint }),
         addedAt: Date.now(),
       });
       added++;
-    } else if (spaceCode && !existing.spaceCode) {
-      byId.set(id, { ...existing, spaceCode });
+    } else {
+      let updated = existing;
+      if (spaceCode && !existing.spaceCode) updated = { ...updated, spaceCode };
+      if (keyprint && !existing.keyprint) updated = { ...updated, keyprint };
+      byId.set(id, updated);
     }
   }
   set([...byId.values()]);
@@ -177,6 +202,34 @@ export function linkContactSpace(id: string, spaceCode: string): void {
 export function getContact(id: string): Contact | null {
   const key = normalizeContactId(id);
   return contacts.find((c) => c.id === key) ?? null;
+}
+
+/**
+ * Trust-on-first-use pinning (Phase 2). Records the fingerprint from the
+ * first VERIFIED message; later mismatches flag the contact instead of
+ * silently switching trust. Returns "pinned" | "ok" | "changed" | "unknown".
+ */
+export function pinContactKey(id: string, print: string): "pinned" | "ok" | "changed" | "unknown" {
+  const key = normalizeContactId(id);
+  const contact = contacts.find((c) => c.id === key);
+  if (!contact || !print) return "unknown";
+  if (!contact.keyprint) {
+    set(contacts.map((c) => (c.id === key ? { ...c, keyprint: print } : c)));
+    return "pinned";
+  }
+  if (contact.keyprint === print) {
+    if (contact.keyChanged) {
+      set(contacts.map((c) => (c.id === key ? { ...c, keyChanged: false } : c)));
+    }
+    return "ok";
+  }
+  set(contacts.map((c) => (c.id === key ? { ...c, keyChanged: true } : c)));
+  return "changed";
+}
+
+/** Drop the whole people list (fresh identity). */
+export function clearContacts(): void {
+  set([]);
 }
 
 /**

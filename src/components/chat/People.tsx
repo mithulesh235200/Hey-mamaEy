@@ -204,6 +204,19 @@ export function People({ userId, variant, onDone }: PeopleProps) {
                     <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">
                       {c.id}
                     </span>
+                    <span className="mt-0.5 block truncate text-[10px]">
+                      {c.keyChanged ? (
+                        <span className="font-semibold text-destructive">
+                          ⚠ Security key changed — confirm it's them
+                        </span>
+                      ) : c.keyprint ? (
+                        <span className="text-emerald-400">
+                          ✓ Verified key {c.keyprint.slice(0, 9)}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">Key not verified yet</span>
+                      )}
+                    </span>
                   </span>
                   <span className="flex shrink-0 items-center gap-1">
                     <button
@@ -318,6 +331,15 @@ export function People({ userId, variant, onDone }: PeopleProps) {
                   </span>
                   <span className="block truncate font-mono text-[10px] text-muted-foreground">
                     {c.id}
+                  </span>
+                  <span className="block truncate text-[10px]">
+                    {c.keyChanged ? (
+                      <span className="font-semibold text-destructive">⚠ Key changed</span>
+                    ) : c.keyprint ? (
+                      <span className="text-emerald-400">✓ {c.keyprint.slice(0, 9)}</span>
+                    ) : (
+                      <span className="text-muted-foreground">Unverified</span>
+                    )}
                   </span>
                 </span>
               </button>

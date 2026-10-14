@@ -32,6 +32,13 @@ export type Message = {
   locked?: boolean;
   /** True for offline-queued messages waiting to be sent on reconnect. */
   queued?: boolean;
+  /** Identity signature over the wire payload (Phase 2). Absent on legacy messages. */
+  sig?: string;
+  /**
+   * Signature check: true = verified author, false = INVALID (possible
+   * impersonation), null/undefined = unverifiable (legacy unsigned or no key).
+   */
+  verified?: boolean | null;
 };
 
 export type Space = {
@@ -305,6 +312,8 @@ import {
 } from "./accessKey";
 // Static import is cycle-safe: contacts.ts only imports this module dynamically.
 import { exportContacts, mergeContacts } from "./contacts";
+// Static import is cycle-safe: identity.ts never imports this module.
+import { exportIdentityJwk } from "./identity";
 
 /* ---------- persistence of local prefs ---------- */
 
@@ -471,6 +480,7 @@ type MessageRow = {
   mime_type: string | null;
   forwarded: boolean;
   read_at?: string | null;
+  sig?: string | null;
   created_at: string;
 };
 
@@ -563,9 +573,77 @@ const toMessage = (r: MessageRow): Message => {
     ...(p2pFileName !== undefined && { p2pFileName }),
     ...(p2pFileSize !== undefined && { p2pFileSize }),
     ...(p2pMimeType !== undefined && { p2pMimeType }),
+    ...(typeof r.sig === "string" && r.sig && { sig: r.sig }),
     createdAt: new Date(r.created_at).getTime(),
   };
 };
+
+/* ---------- Phase 2 signature verification (TOFU) ---------- */
+
+// Authors whose key change we already warned about this session.
+const keyChangeWarned = new Set<string>();
+
+/**
+ * Verifies wire signatures for a batch of freshly fetched rows and stamps
+ * `verified` on the decoded messages. Also pins contact keys on first
+ * verified sighting (trust-on-first-use).
+ */
+async function attachVerification(
+  code: string,
+  rows: MessageRow[],
+  decoded: Message[],
+): Promise<void> {
+  const signed = rows.filter((r) => typeof r.sig === "string" && r.sig);
+  if (signed.length === 0) return;
+  try {
+    const { fetchAuthorKeys, verifyWireMessage, fingerprintOfPublicKey } =
+      await import("./identity");
+    const { pinContactKey } = await import("./contacts");
+    const keys = await fetchAuthorKeys(signed.map((r) => r.author_id));
+    const byId = new Map(decoded.map((m) => [m.id, m]));
+    await Promise.all(
+      signed.map(async (row) => {
+        const msg = byId.get(row.id);
+        if (!msg) return;
+        const pub = keys.get(row.author_id);
+        if (!pub) {
+          msg.verified = null;
+          return;
+        }
+        const ok = await verifyWireMessage(pub, row.sig as string, {
+          code,
+          authorId: row.author_id,
+          kind: row.kind,
+          ...(row.text != null && { wireText: row.text }),
+          ...(row.data_url != null && { dataUrl: row.data_url }),
+          ...(row.file_name != null && { fileName: row.file_name }),
+          forwarded: row.forwarded ?? false,
+        });
+        msg.verified = ok;
+        if (!ok) return;
+        // TOFU pin for friends.
+        try {
+          const print = await fingerprintOfPublicKey(pub.x, pub.y);
+          if (print) {
+            const res = pinContactKey(row.author_id, print);
+            if (res === "changed" && !keyChangeWarned.has(row.author_id)) {
+              keyChangeWarned.add(row.author_id);
+              const { toast } = await import("sonner").catch(() => ({ toast: null }));
+              (toast as { warning?: (t: string, o?: object) => void } | null)?.warning?.(
+                `Security key changed for ${row.author_name || row.author_id}`,
+                { description: "Verify it's really them before trusting new messages." },
+              );
+            }
+          }
+        } catch {
+          /* pinning is best-effort */
+        }
+      }),
+    );
+  } catch {
+    /* verification unavailable — messages stay unverified */
+  }
+}
 
 /* ---------- hydrate + polling ---------- */
 
@@ -651,6 +729,7 @@ async function decryptIfNeeded(msg: Message, code: string): Promise<Message> {
       file_size: msg.fileSize ?? null,
       mime_type: msg.mimeType ?? null,
       forwarded: msg.forwarded ?? false,
+      ...(msg.sig !== undefined && { sig: msg.sig }),
       created_at: new Date(msg.createdAt).toISOString(),
     } as MessageRow);
     return { ...decoded, id: msg.id, spaceId: msg.spaceId, createdAt: msg.createdAt };
@@ -675,7 +754,9 @@ async function fetchMessages(code: string): Promise<Message[]> {
       return [];
     }
     const rows = ((data ?? []) as MessageRow[]).map(toMessage);
-    return await Promise.all(rows.map((m) => decryptIfNeeded(m, code)));
+    const decoded = await Promise.all(rows.map((m) => decryptIfNeeded(m, code)));
+    await attachVerification(code, (data ?? []) as MessageRow[], decoded);
+    return decoded;
   } catch (e) {
     if (e instanceof Error && e.message.includes("SPACE_USER_BANNED")) throw e;
     return [];
@@ -949,6 +1030,8 @@ export function hydrate() {
     // Show the last saved chats instantly so the app opens offline; the
     // network sync below refreshes them when possible.
     restoreOfflineSnapshot();
+    // Publish our identity key so friends can verify our messages.
+    ensureRegisteredIdentity();
     void (async () => {
       try {
         await loadSpaces();
@@ -976,6 +1059,7 @@ export function hydrate() {
     window.addEventListener("online", () => {
       void flushOutbox();
       void refreshActiveSpace();
+      ensureRegisteredIdentity();
     });
   }
 
@@ -988,10 +1072,36 @@ export function hydrate() {
 
 /* ---------- actions ---------- */
 
+/* ---------- Phase 2 identity registration ---------- */
+
+/** Publish our identity public key (first-claim-wins). Fire-and-forget safe. */
+export function ensureRegisteredIdentity(): void {
+  try {
+    if (typeof window === "undefined" || isOffline()) {
+      // Retry on reconnect: registration needs the network.
+      return;
+    }
+    const uid = prefs.userId || state.userId;
+    const key = prefs.permanentKey;
+    if (!uid || !key) return;
+    void (async () => {
+      try {
+        const { registerIdentityKey } = await import("./identity");
+        await registerIdentityKey(uid, key);
+      } catch {
+        /* best-effort */
+      }
+    })();
+  } catch {
+    /* ignore */
+  }
+}
+
 export function signInWithId(id: string) {
   prefs.userId = id.trim().toUpperCase();
   savePrefs();
   set({ userId: prefs.userId });
+  ensureRegisteredIdentity();
 }
 
 export function regenerateId() {
@@ -1002,6 +1112,13 @@ export function regenerateId() {
   prefs.userId = deriveUserIdFromAccessKey(prefs.permanentKey);
   savePrefs();
   set({ userId: prefs.userId });
+  // New identity = new keypair: drop the old device key so one is generated.
+  try {
+    void import("./identity").then((m) => m.clearIdentityKey());
+  } catch {
+    /* ignore */
+  }
+  ensureRegisteredIdentity();
 }
 
 export function setDisplayName(name: string) {
@@ -1116,10 +1233,12 @@ export async function setSpacePassword(spaceId: string, password: string): Promi
   const pw = password.trim();
   const { hashRoomPassword, setRoomPassword } = await import("./roomCrypto");
   const p_password_hash = pw ? await hashRoomPassword(pw) : null;
+  const p_ticket = await ownerTicket("set_password", space);
   const { data, error } = await supabase.rpc("set_space_password", {
     p_code: space.code,
     p_owner_id: state.userId,
     ...(p_password_hash !== null && { p_password_hash }),
+    ...(p_ticket !== null && { p_ticket }),
   });
   if (error || data !== true) return false;
   setRoomPassword(space.code, pw);
@@ -1135,14 +1254,28 @@ function ownerSpace(spaceId: string): Space | null {
   return space;
 }
 
+type AdminAction = "set_password" | "set_lock" | "set_readonly" | "kick" | "unban" | "delete_space";
+
+/** Mint a signed admin ticket (null when identity is unavailable). */
+async function ownerTicket(action: AdminAction, space: Space): Promise<string | null> {
+  try {
+    const { requestAdminTicket } = await import("./identity");
+    return await requestAdminTicket(action, space.code, state.userId);
+  } catch {
+    return null;
+  }
+}
+
 /** Owner-only: lock/unlock the room (locked rooms reject new joins). */
 export async function setSpaceLock(spaceId: string, locked: boolean): Promise<boolean> {
   const space = ownerSpace(spaceId);
   if (!space) return false;
+  const p_ticket = await ownerTicket("set_lock", space);
   const { data, error } = await supabase.rpc("set_space_lock", {
     p_code: space.code,
     p_owner_id: state.userId,
     p_locked: locked,
+    ...(p_ticket !== null && { p_ticket }),
   });
   if (error || data !== true) return false;
   set({
@@ -1156,10 +1289,12 @@ export async function setSpaceLock(spaceId: string, locked: boolean): Promise<bo
 export async function setSpaceReadonly(spaceId: string, readonly: boolean): Promise<boolean> {
   const space = ownerSpace(spaceId);
   if (!space) return false;
+  const p_ticket = await ownerTicket("set_readonly", space);
   const { data, error } = await supabase.rpc("set_space_readonly", {
     p_code: space.code,
     p_owner_id: state.userId,
     p_readonly: readonly,
+    ...(p_ticket !== null && { p_ticket }),
   });
   if (error || data !== true) return false;
   set({
@@ -1175,10 +1310,12 @@ export async function kickSpaceUser(spaceId: string, targetUserId: string): Prom
   const target = (targetUserId ?? "").trim().toUpperCase();
   if (!space || !target) return false;
   if (target === state.userId) return false;
+  const p_ticket = await ownerTicket("kick", space);
   const { data, error } = await supabase.rpc("kick_space_user", {
     p_code: space.code,
     p_owner_id: state.userId,
     p_target_user_id: target,
+    ...(p_ticket !== null && { p_ticket }),
   });
   return !error && data === true;
 }
@@ -1188,10 +1325,12 @@ export async function unbanSpaceUser(spaceId: string, targetUserId: string): Pro
   const space = ownerSpace(spaceId);
   const target = (targetUserId ?? "").trim().toUpperCase();
   if (!space || !target) return false;
+  const p_ticket = await ownerTicket("unban", space);
   const { data, error } = await supabase.rpc("unban_space_user", {
     p_code: space.code,
     p_owner_id: state.userId,
     p_target_user_id: target,
+    ...(p_ticket !== null && { p_ticket }),
   });
   return !error && data === true;
 }
@@ -1275,9 +1414,11 @@ export async function deleteSpaceForEveryone(spaceId: string): Promise<boolean> 
   const space = state.spaces.find((item) => item.id === spaceId);
   if (!space || !state.userId || space.ownerId !== state.userId) return false;
 
+  const p_ticket = await ownerTicket("delete_space", space);
   const { data, error } = await supabase.rpc("delete_space_for_everyone", {
     p_code: space.code,
     p_owner_id: state.userId,
+    ...(p_ticket !== null && { p_ticket }),
   });
   if (error || data !== true) return false;
   return leaveSpace(spaceId);
@@ -1347,6 +1488,22 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
     const { getRoomPassword, hashRoomPassword } = await import("./roomCrypto");
     const pw = getRoomPassword(space.code).trim();
     const p_password_hash = pw ? await hashRoomPassword(pw) : null;
+    // Phase 2: sign the exact wire payload (best-effort; null on legacy devices).
+    let p_sig: string | null = null;
+    try {
+      const { signWireMessage } = await import("./identity");
+      p_sig = await signWireMessage({
+        code: space.code,
+        authorId: state.userId,
+        kind: wireKind,
+        ...(wireText !== undefined && { wireText }),
+        ...(msg.dataUrl !== undefined && { dataUrl: msg.dataUrl }),
+        ...(wireFileName !== undefined && { fileName: wireFileName }),
+        forwarded: msg.forwarded ?? false,
+      });
+    } catch {
+      p_sig = null;
+    }
     const { data, error } = await supabase.rpc("send_space_message", {
       p_code: space.code,
       p_author_id: state.userId,
@@ -1359,6 +1516,7 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
       ...(wireMimeType !== undefined && { p_mime_type: wireMimeType }),
       p_forwarded: msg.forwarded ?? false,
       ...(p_password_hash !== null && { p_password_hash }),
+      ...(p_sig !== null && { p_sig }),
     });
     const row = (Array.isArray(data) ? data[0] : data) as MessageRow | null;
     if (error || !row) {
@@ -1367,6 +1525,8 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
     }
 
     const saved = await decryptIfNeeded(toMessage(row), space.code);
+    // Own just-signed messages are verified by construction.
+    if (p_sig && row.sig === p_sig) saved.verified = true;
     if (!state.messages.some((m) => m.id === saved.id)) {
       set({ messages: [...state.messages, saved] });
     }
@@ -1443,17 +1603,32 @@ export async function editMessage(messageId: string, spaceId: string, text: stri
   } catch {
     return null;
   }
+  let p_sig: string | null = null;
+  try {
+    const { signWireMessage } = await import("./identity");
+    p_sig = await signWireMessage({
+      code: space.code,
+      authorId: state.userId,
+      kind: "text",
+      wireText,
+      forwarded: false,
+    });
+  } catch {
+    p_sig = null;
+  }
   const { data, error } = await supabase.rpc("edit_space_message", {
     p_code: space.code,
     p_message_id: messageId,
     p_author_id: state.userId,
     p_text: wireText,
     ...(pwHash !== null && { p_password_hash: pwHash }),
+    ...(p_sig !== null && { p_sig }),
   });
   if (error) return null;
   const row = (Array.isArray(data) ? data[0] : data) as MessageRow | null;
   if (!row) return null;
   const edited = await decryptIfNeeded(toMessage(row), space.code);
+  if (p_sig && row.sig === p_sig) edited.verified = true;
   set({ messages: state.messages.map((item) => (item.id === edited.id ? edited : item)) });
   persistOfflineSnapshot();
   return edited;
@@ -1660,6 +1835,12 @@ export function forgetIdentity() {
   wipeStoredIdentity();
   prefs = { userId: "", displayName: "You", codes: [], permanentKey: "" };
   hydrated = false;
+  try {
+    void import("./identity").then((m) => m.clearIdentityKey());
+    void import("./contacts").then((m) => m.clearContacts());
+  } catch {
+    /* ignore */
+  }
   set({
     userId: "",
     displayName: "You",
@@ -1687,7 +1868,15 @@ export function getBackupPayload(): string {
   } catch {
     contacts = undefined;
   }
-  return createFullBackupPayload(key, prefs.displayName, prefs.codes, contacts);
+  // The device identity private key rides along too (same trust root as the
+  // access key itself): restoring keeps the SAME verifiable identity.
+  let idk: { kty: string; crv: string; x: string; y: string; d: string } | undefined;
+  try {
+    idk = exportIdentityJwk();
+  } catch {
+    idk = undefined;
+  }
+  return createFullBackupPayload(key, prefs.displayName, prefs.codes, contacts, idk);
 }
 
 export async function restoreFromPermanentKey(input: string): Promise<{
@@ -1718,6 +1907,15 @@ export async function restoreFromPermanentKey(input: string): Promise<{
         /* contacts restore is best-effort */
       }
     }
+    if (parsed.idk) {
+      try {
+        const { importIdentityJwk } = await import("./identity");
+        importIdentityJwk(parsed.idk);
+      } catch {
+        /* a fresh keypair will be generated instead */
+      }
+    }
+    ensureRegisteredIdentity();
 
     savePrefs();
     set({ userId: prefs.userId, displayName: prefs.displayName });

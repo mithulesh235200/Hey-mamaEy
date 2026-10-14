@@ -96,6 +96,16 @@ export type ContactPayload = {
   id: string;
   nickname: string;
   spaceCode?: string;
+  keyprint?: string;
+};
+
+/** Device identity private key (JWK) — same trust root as the access key. */
+export type IdentityKeyPayload = {
+  kty: string;
+  crv: string;
+  x: string;
+  y: string;
+  d: string;
 };
 
 export type AccessKeyPayload = {
@@ -104,6 +114,7 @@ export type AccessKeyPayload = {
   displayName: string;
   codes: string[];
   contacts?: ContactPayload[];
+  idk?: IdentityKeyPayload;
 };
 
 /**
@@ -114,6 +125,7 @@ export function createFullBackupPayload(
   displayName: string,
   codes: string[],
   contacts?: ContactPayload[],
+  idk?: IdentityKeyPayload,
 ): string {
   const userId = deriveUserIdFromAccessKey(key);
   const data: AccessKeyPayload = {
@@ -122,6 +134,7 @@ export function createFullBackupPayload(
     displayName: displayName || "You",
     codes: codes || [],
     ...(contacts && contacts.length > 0 && { contacts: contacts.slice(0, 200) }),
+    ...(idk && idk.kty === "EC" && idk.crv === "P-256" && idk.d && { idk }),
   };
   try {
     return "HEYMAMA_KEY_" + btoa(unescape(encodeURIComponent(JSON.stringify(data))));
@@ -139,6 +152,7 @@ export function parseBackupInput(input: string): {
   displayName?: string;
   codes?: string[];
   contacts?: ContactPayload[];
+  idk?: IdentityKeyPayload;
 } {
   const clean = input.trim();
   if (clean.startsWith("HEYMAMA_KEY_") || clean.startsWith("HEYMAMA_BACKUP_")) {
@@ -152,6 +166,7 @@ export function parseBackupInput(input: string): {
         displayName?: string;
         codes?: string[];
         contacts?: unknown;
+        idk?: unknown;
       };
       const secretKey = parsed.key || parsed.phrase;
       if (secretKey) {
@@ -172,13 +187,30 @@ export function parseBackupInput(input: string): {
               typeof r.spaceCode === "string" && r.spaceCode.trim()
                 ? r.spaceCode.trim()
                 : undefined;
+            const keyprint =
+              typeof r.keyprint === "string" && /^[A-Z2-7]{4}(-[A-Z2-7]{4}){3}$/.test(r.keyprint)
+                ? r.keyprint
+                : undefined;
             cleanList.push({
               id,
               nickname,
               ...(spaceCode !== undefined && { spaceCode }),
+              ...(keyprint !== undefined && { keyprint }),
             });
           }
           if (cleanList.length > 0) contacts = cleanList;
+        }
+        let idk: IdentityKeyPayload | undefined;
+        const rawIdk = parsed.idk as Partial<IdentityKeyPayload> | undefined;
+        if (
+          rawIdk &&
+          rawIdk.kty === "EC" &&
+          rawIdk.crv === "P-256" &&
+          typeof rawIdk.x === "string" &&
+          typeof rawIdk.y === "string" &&
+          typeof rawIdk.d === "string"
+        ) {
+          idk = { kty: "EC", crv: "P-256", x: rawIdk.x, y: rawIdk.y, d: rawIdk.d };
         }
         return {
           key: secretKey,
@@ -186,6 +218,7 @@ export function parseBackupInput(input: string): {
           ...(parsed.displayName !== undefined && { displayName: parsed.displayName }),
           ...(parsed.codes !== undefined && { codes: parsed.codes }),
           ...(contacts !== undefined && { contacts }),
+          ...(idk !== undefined && { idk }),
         };
       }
     } catch {

@@ -152,6 +152,7 @@ export type Database = {
           p_message_id: string;
           p_text: string;
           p_password_hash?: string;
+          p_sig?: string;
         };
         Returns: {
           author_id: string;
@@ -212,7 +213,7 @@ export type Database = {
         };
       };
       delete_space_for_everyone: {
-        Args: { p_code: string; p_owner_id: string };
+        Args: { p_code: string; p_owner_id: string; p_ticket?: string };
         Returns: boolean;
       };
       mark_space_messages_read: {
@@ -269,6 +270,7 @@ export type Database = {
           p_kind: string;
           p_mime_type?: string;
           p_password_hash?: string;
+          p_sig?: string;
           p_text?: string;
         };
         Returns: {
@@ -294,24 +296,39 @@ export type Database = {
         };
       };
       set_space_password: {
-        Args: { p_code: string; p_owner_id: string; p_password_hash?: string };
+        Args: { p_code: string; p_owner_id: string; p_password_hash?: string; p_ticket?: string };
         Returns: boolean;
       };
       set_space_lock: {
-        Args: { p_code: string; p_locked?: boolean; p_owner_id: string };
+        Args: { p_code: string; p_locked?: boolean; p_owner_id: string; p_ticket?: string };
         Returns: boolean;
       };
       set_space_readonly: {
-        Args: { p_code: string; p_owner_id: string; p_readonly?: boolean };
+        Args: { p_code: string; p_owner_id: string; p_readonly?: boolean; p_ticket?: string };
         Returns: boolean;
       };
       kick_space_user: {
-        Args: { p_code: string; p_owner_id: string; p_target_user_id: string };
+        Args: { p_code: string; p_owner_id: string; p_target_user_id: string; p_ticket?: string };
         Returns: boolean;
       };
       unban_space_user: {
-        Args: { p_code: string; p_owner_id: string; p_target_user_id: string };
+        Args: { p_code: string; p_owner_id: string; p_target_user_id: string; p_ticket?: string };
         Returns: boolean;
+      };
+      register_identity: {
+        Args: { p_public_jwk: string; p_reg_hash: string; p_user_id: string };
+        Returns: boolean;
+      };
+      rotate_identity: {
+        Args: { p_public_jwk: string; p_reg_hash: string; p_user_id: string };
+        Returns: boolean;
+      };
+      get_identity_keys: {
+        Args: { p_user_ids: string[] };
+        Returns: {
+          public_jwk: string;
+          user_id: string;
+        }[];
       };
       get_space_bans: {
         Args: { p_code: string; p_owner_id: string };
