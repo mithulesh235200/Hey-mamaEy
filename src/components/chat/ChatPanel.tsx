@@ -887,6 +887,17 @@ export function ChatPanel({
   // Hooks must run before any early return (Rules of Hooks).
   const online = useOnline();
 
+  // WhatsApp-like composer: grow with content up to max-h-32, then scroll.
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const max = 128;
+    const next = Math.min(el.scrollHeight, max);
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
+  }, [text, space?.id]);
+
   if (!space) {
     return (
       <section className="chat-canvas flex h-full flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
@@ -2456,7 +2467,7 @@ export function ChatPanel({
                     : "Message..."
             }
             aria-label={editing ? "Edit message" : "Message"}
-            className="thin-scroll min-w-0 max-h-32 min-h-11 flex-1 basis-24 resize-none rounded-xl bg-card px-3 py-2.5 text-sm outline-none ring-1 ring-input focus:ring-primary"
+            className="thin-scroll min-w-0 max-h-32 min-h-11 flex-1 basis-24 resize-none overflow-hidden rounded-xl bg-card px-3 py-2.5 text-sm leading-relaxed outline-none ring-1 ring-input focus:ring-primary"
           />
           <IconBtn
             label={recording ? "Stop recording" : "Record voice note"}

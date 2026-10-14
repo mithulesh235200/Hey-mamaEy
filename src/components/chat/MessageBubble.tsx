@@ -274,9 +274,9 @@ export function MessageBubble({
         </span>
       )}
 
-      <div className="relative flex max-w-[85%] items-end gap-1 sm:max-w-[75%]">
+      <div className="relative flex max-w-[92%] flex-col gap-1 sm:max-w-[75%] sm:flex-row sm:items-end">
         <div
-          className={`message-bubble relative rounded-2xl p-3 shadow-md transition-all ${
+          className={`message-bubble relative w-fit max-w-full rounded-2xl p-3 shadow-md transition-all ${
             mine
               ? "rounded-br-xs bg-primary text-primary-foreground font-medium"
               : "rounded-bl-xs border border-border bg-card text-card-foreground font-medium"
@@ -518,10 +518,13 @@ export function MessageBubble({
           </div>
         </div>
 
-        {/* Message Actions */}
+        {/* Message Actions: below the bubble on mobile (so the bubble keeps its
+            full width like WhatsApp), inline on hover for desktop. */}
         <div
           ref={actionsRef}
-          className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex flex-wrap items-center gap-0.5 relative shrink-0 max-w-full [&>button]:min-h-9 [&>button]:min-w-9"
+          className={`opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex flex-wrap items-center gap-0.5 relative shrink-0 max-w-full [&>button]:min-h-9 [&>button]:min-w-9 ${
+            mine ? "self-end" : "self-start"
+          }`}
         >
           {message.text && (
             <button
