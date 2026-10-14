@@ -41,6 +41,8 @@ export type Space = {
   createdAt: number;
   ownerId?: string | null;
   hasPassword?: boolean;
+  isLocked?: boolean;
+  isReadonly?: boolean;
   expiresAt?: number | null;
 };
 
@@ -450,6 +452,8 @@ type SpaceRow = {
   created_at: string;
   owner_id?: string | null;
   has_password?: boolean | null;
+  is_locked?: boolean | null;
+  is_readonly?: boolean | null;
   expires_at?: string | null;
 };
 type MessageRow = {
@@ -475,6 +479,8 @@ const toSpace = (r: SpaceRow): Space => ({
   createdAt: new Date(r.created_at).getTime(),
   ...(r.owner_id !== undefined && { ownerId: r.owner_id }),
   ...(r.has_password !== undefined && { hasPassword: Boolean(r.has_password) }),
+  ...(r.is_locked !== undefined && { isLocked: Boolean(r.is_locked) }),
+  ...(r.is_readonly !== undefined && { isReadonly: Boolean(r.is_readonly) }),
   ...(r.expires_at !== undefined && {
     expiresAt: r.expires_at ? new Date(r.expires_at).getTime() : null,
   }),
@@ -571,24 +577,49 @@ async function passwordHashFor(code: string, password: string): Promise<string |
   return hashRoomPassword(pw);
 }
 
-async function fetchSpace(code: string, password = ""): Promise<Space | null> {
+const ACCESS_ERRORS = ["SPACE_PASSWORD_", "SPACE_LOCKED", "SPACE_USER_BANNED"] as const;
+
+function isAccessError(e: unknown): boolean {
+  return (
+    e instanceof Error &&
+    (e.message.startsWith("SPACE_PASSWORD_") ||
+      e.message.includes("SPACE_LOCKED") ||
+      e.message.includes("SPACE_USER_BANNED"))
+  );
+}
+
+async function fetchSpace(
+  code: string,
+  password = "",
+  opts?: { checkJoin?: boolean },
+): Promise<Space | null> {
   try {
     const p_password_hash = await passwordHashFor(code, password);
     const { data, error } = await supabase.rpc("get_space_by_code", {
       p_code: code,
       ...(p_password_hash !== null && { p_password_hash }),
+      p_user_id: state.userId || prefs.userId || "",
+      p_check_join: opts?.checkJoin ?? false,
     });
     if (error) {
       const msg = error.message ?? "";
-      if (msg.includes("SPACE_PASSWORD_REQUIRED")) throw new Error("SPACE_PASSWORD_REQUIRED");
-      if (msg.includes("SPACE_PASSWORD_INVALID")) throw new Error("SPACE_PASSWORD_INVALID");
+      if (ACCESS_ERRORS.some((k) => msg.includes(k))) {
+        const key = msg.includes("SPACE_LOCKED")
+          ? "SPACE_LOCKED"
+          : msg.includes("SPACE_USER_BANNED")
+            ? "SPACE_USER_BANNED"
+            : msg.includes("SPACE_PASSWORD_REQUIRED")
+              ? "SPACE_PASSWORD_REQUIRED"
+              : "SPACE_PASSWORD_INVALID";
+        throw new Error(key);
+      }
       return null;
     }
     const row = (Array.isArray(data) ? data[0] : data) as SpaceRow | null;
     if (!row || !row.id || !row.code) return null;
     return toSpace(row);
   } catch (e) {
-    if (e instanceof Error && e.message.startsWith("SPACE_PASSWORD_")) throw e;
+    if (isAccessError(e)) throw e;
     return null;
   }
 }
@@ -634,11 +665,17 @@ async function fetchMessages(code: string): Promise<Message[]> {
     const { data, error } = await supabase.rpc("get_space_messages", {
       p_code: code,
       ...(p_password_hash !== null && { p_password_hash }),
+      p_user_id: state.userId || prefs.userId || "",
     });
-    if (error) return [];
+    if (error) {
+      // Banned IDs surface on send + sync; keep polling quiet here.
+      if ((error.message ?? "").includes("SPACE_USER_BANNED")) throw new Error("SPACE_USER_BANNED");
+      return [];
+    }
     const rows = ((data ?? []) as MessageRow[]).map(toMessage);
     return await Promise.all(rows.map((m) => decryptIfNeeded(m, code)));
-  } catch {
+  } catch (e) {
+    if (e instanceof Error && e.message.includes("SPACE_USER_BANNED")) throw e;
     return [];
   }
 }
@@ -783,6 +820,10 @@ async function loadSpaces() {
           }
           return space;
         } catch (e) {
+          // Kicked users lose the room: drop it from this device for good.
+          if (e instanceof Error && e.message.includes("SPACE_USER_BANNED")) {
+            return null;
+          }
           // Password-gated rooms stay listed locally; user can unlock or leave.
           if (e instanceof Error && e.message.startsWith("SPACE_PASSWORD_")) {
             return lockedPlaceholder(code);
@@ -796,8 +837,33 @@ async function loadSpaces() {
     const spaces = results.filter(
       (s): s is Space => s !== null && Boolean(s.id) && Boolean(s.code),
     );
+    // Forget codes the server rejected (kicked/deleted) so they never resurrect.
+    const liveCodes = new Set(spaces.map((s) => s.code));
+    const deadCodes = prefs.codes.filter(
+      (c) =>
+        !liveCodes.has(c) && !prevByCode.get(c)?.hasPassword && !snapByCode.get(c)?.hasPassword,
+    );
+    if (deadCodes.length > 0) {
+      prefs.codes = prefs.codes.filter((c) => !deadCodes.includes(c));
+      savePrefs();
+      for (const c of deadCodes) {
+        try {
+          clearRoomPassword(c);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
     const ids = spaces.map((s) => s.id);
-    const messageLists = await Promise.all(spaces.map((s) => fetchMessages(s.code)));
+    const messageLists = await Promise.all(
+      spaces.map((s) =>
+        fetchMessages(s.code).catch((e) => {
+          // A mid-sync kick surfaces here; the next sync drops the room.
+          if (e instanceof Error && e.message.includes("SPACE_USER_BANNED")) return [];
+          return [];
+        }),
+      ),
+    );
     const validMessages = filterRetained(messageLists.flat());
 
     // Empty fetch while we hold a snapshot usually means the network dropped
@@ -1011,15 +1077,25 @@ export async function joinSpace(rawCode: string, password = ""): Promise<Space |
   }
   if (local && password.trim()) setRoomPassword(local.code, password.trim());
 
-  // Password errors propagate so the UI can prompt instead of "invalid code".
+  // Access errors (password/locked/banned) propagate so the UI can prompt
+  // instead of "invalid code".
   const { getRoomPassword: getPw } = await import("./roomCrypto");
-  const space: Space | null = await fetchSpace(formatted, password.trim() || getPw(formatted));
+  const space: Space | null = await fetchSpace(formatted, password.trim() || getPw(formatted), {
+    checkJoin: true,
+  });
   if (!space || !space.id || !space.code) return null;
   if (password.trim()) setRoomPassword(space.code, password.trim());
   rememberCode(space.code);
-  void registerMembership(space.code, state.userId);
+  try {
+    await supabase.rpc("register_space_member", {
+      p_code: space.code,
+      p_user_id: state.userId,
+    });
+  } catch {
+    // Lock/ban races surface on the fetch above; registration is best-effort.
+  }
 
-  const history = await fetchMessages(space.code);
+  const history = await fetchMessages(space.code).catch(() => []);
   const existingIds = new Set(state.messages.map((m) => m.id));
 
   set({
@@ -1049,6 +1125,92 @@ export async function setSpacePassword(spaceId: string, password: string): Promi
     spaces: state.spaces.map((s) => (s.id === spaceId ? { ...s, hasPassword: Boolean(pw) } : s)),
   });
   return true;
+}
+
+function ownerSpace(spaceId: string): Space | null {
+  const space = state.spaces.find((s) => s.id === spaceId);
+  if (!space || !state.userId || space.ownerId !== state.userId) return null;
+  return space;
+}
+
+/** Owner-only: lock/unlock the room (locked rooms reject new joins). */
+export async function setSpaceLock(spaceId: string, locked: boolean): Promise<boolean> {
+  const space = ownerSpace(spaceId);
+  if (!space) return false;
+  const { data, error } = await supabase.rpc("set_space_lock", {
+    p_code: space.code,
+    p_owner_id: state.userId,
+    p_locked: locked,
+  });
+  if (error || data !== true) return false;
+  set({
+    spaces: state.spaces.map((s) => (s.id === spaceId ? { ...s, isLocked: locked } : s)),
+  });
+  persistOfflineSnapshot();
+  return true;
+}
+
+/** Owner-only: read-only mode (only the host can post — e.g. lab docs). */
+export async function setSpaceReadonly(spaceId: string, readonly: boolean): Promise<boolean> {
+  const space = ownerSpace(spaceId);
+  if (!space) return false;
+  const { data, error } = await supabase.rpc("set_space_readonly", {
+    p_code: space.code,
+    p_owner_id: state.userId,
+    p_readonly: readonly,
+  });
+  if (error || data !== true) return false;
+  set({
+    spaces: state.spaces.map((s) => (s.id === spaceId ? { ...s, isReadonly: readonly } : s)),
+  });
+  persistOfflineSnapshot();
+  return true;
+}
+
+/** Owner-only: kick a user ID (bans + removes membership). */
+export async function kickSpaceUser(spaceId: string, targetUserId: string): Promise<boolean> {
+  const space = ownerSpace(spaceId);
+  const target = (targetUserId ?? "").trim().toUpperCase();
+  if (!space || !target) return false;
+  if (target === state.userId) return false;
+  const { data, error } = await supabase.rpc("kick_space_user", {
+    p_code: space.code,
+    p_owner_id: state.userId,
+    p_target_user_id: target,
+  });
+  return !error && data === true;
+}
+
+/** Owner-only: lift a kick/ban. */
+export async function unbanSpaceUser(spaceId: string, targetUserId: string): Promise<boolean> {
+  const space = ownerSpace(spaceId);
+  const target = (targetUserId ?? "").trim().toUpperCase();
+  if (!space || !target) return false;
+  const { data, error } = await supabase.rpc("unban_space_user", {
+    p_code: space.code,
+    p_owner_id: state.userId,
+    p_target_user_id: target,
+  });
+  return !error && data === true;
+}
+
+export type SpaceBan = { userId: string; bannedAt: number };
+
+/** Owner-only: list kicked/banned user IDs. */
+export async function getSpaceBans(spaceId: string): Promise<SpaceBan[]> {
+  const space = ownerSpace(spaceId);
+  if (!space) return [];
+  const { data, error } = await supabase.rpc("get_space_bans", {
+    p_code: space.code,
+    p_owner_id: state.userId,
+  });
+  if (error || !Array.isArray(data)) return [];
+  return (data as { banned_user_id: string; banned_at: string }[])
+    .filter((r) => typeof r.banned_user_id === "string")
+    .map((r) => ({
+      userId: r.banned_user_id,
+      bannedAt: r.banned_at ? new Date(r.banned_at).getTime() : 0,
+    }));
 }
 
 /** Retry decryption for a room after the user supplies its password. */
@@ -1197,7 +1359,10 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
       ...(p_password_hash !== null && { p_password_hash }),
     });
     const row = (Array.isArray(data) ? data[0] : data) as MessageRow | null;
-    if (error || !row) return false;
+    if (error || !row) {
+      lastSendError = error ? (classifySendError(error.message ?? "") ?? "SEND_FAILED") : null;
+      return false;
+    }
 
     const saved = await decryptIfNeeded(toMessage(row), space.code);
     if (!state.messages.some((m) => m.id === saved.id)) {
@@ -1218,9 +1383,25 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
   }
 }
 
+/** Machine-readable reason for the last failed send (UI toasts). */
+let lastSendError: string | null = null;
+export function getLastSendError(): string | null {
+  return lastSendError;
+}
+
+function classifySendError(msg: string): string | null {
+  if (msg.includes("SPACE_READ_ONLY")) return "SPACE_READ_ONLY";
+  if (msg.includes("SPACE_USER_BANNED")) return "SPACE_USER_BANNED";
+  if (msg.includes("SPACE_LOCKED")) return "SPACE_LOCKED";
+  if (msg.includes("SPACE_PASSWORD_REQUIRED")) return "SPACE_PASSWORD_REQUIRED";
+  if (msg.includes("SPACE_PASSWORD_INVALID")) return "SPACE_PASSWORD_INVALID";
+  return null;
+}
+
 export async function sendMessage(
   msg: Omit<Message, "id" | "createdAt" | "authorId" | "authorName">,
 ) {
+  lastSendError = null;
   return insertMessage(msg);
 }
 

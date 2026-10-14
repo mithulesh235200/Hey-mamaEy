@@ -232,6 +232,18 @@ export function Sidebar({
         toast.error("Wrong password", { description: "The room password is incorrect." });
         return;
       }
+      if (msg.includes("SPACE_LOCKED")) {
+        toast.error("Room is locked", {
+          description: "The host locked this room — no new guests right now.",
+        });
+        return;
+      }
+      if (msg.includes("SPACE_USER_BANNED")) {
+        toast.error("You were removed", {
+          description: "The host removed this ID from the Space.",
+        });
+        return;
+      }
       toast.error("Invalid Space Code", {
         description: "No Space exists with that code. Please check the code and try again.",
       });
@@ -583,7 +595,7 @@ export function Sidebar({
                       {s.name}
                     </p>
                     <span className="shrink-0 font-mono text-[10px] text-primary">
-                      {s.hasPassword ? `🔒 ${s.code}` : s.code}
+                      {`${s.hasPassword ? "🔒 " : ""}${s.isLocked ? "🚫 " : ""}${s.isReadonly ? "📖 " : ""}${s.code}`}
                     </span>
                   </div>
                   <p className="truncate text-[11px] text-muted-foreground">{lastOf(s.id)}</p>

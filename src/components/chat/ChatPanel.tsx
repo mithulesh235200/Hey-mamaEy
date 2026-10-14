@@ -58,6 +58,7 @@ import {
   editMessage,
   hideMessageForMe,
   sendMessage,
+  getLastSendError,
   leaveSpace,
   markSpaceMessagesRead,
   markSpaceAsRead,
@@ -240,6 +241,12 @@ export function ChatPanel({
   // clobbers the "enter password to unlock" field (they shared state before).
   const [roomPasswordSettingInput, setRoomPasswordSettingInput] = useState("");
   const [showRoomPasswordBox, setShowRoomPasswordBox] = useState(false);
+  const [showAccessBox, setShowAccessBox] = useState(false);
+  const [kickInput, setKickInput] = useState("");
+  const [bans, setBans] = useState<{ userId: string; bannedAt: number }[]>([]);
+  const [bansLoading, setBansLoading] = useState(false);
+  const isOwner = space?.ownerId === userId;
+  const readOnlyForMe = Boolean(space?.isReadonly && !isOwner);
   const lockedCount = messages.filter((m) => m.locked).length;
 
   const [starredIds, setStarredIds] = useState<Set<string>>(() => {
@@ -945,6 +952,10 @@ export function ChatPanel({
     kind: MediaKind,
     extra: Partial<Omit<Message, "id" | "createdAt" | "authorId" | "authorName">>,
   ) => {
+    if (readOnlyForMe) {
+      toast.error("Read-only room", { description: "Only the host can post here." });
+      return;
+    }
     const offline = isOffline();
     const ok = await sendMessage({ spaceId: space.id, kind, ...extra });
     if (ok) {
@@ -954,17 +965,55 @@ export function ChatPanel({
         playChime("send", mutedSound || !soundEffectsEnabled);
       }
     } else {
-      toast.error(
-        isOffline()
-          ? "You're offline — files and media need a connection"
-          : "Message failed to send — check your connection",
-      );
+      sendFailureToast();
+    }
+  };
+
+  const sendFailureToast = () => {
+    if (isOffline()) {
+      toast.error("You're offline — files and media need a connection");
+      return;
+    }
+    const reason = getLastSendError();
+    if (reason === "SPACE_READ_ONLY") {
+      toast.error("Read-only room", {
+        description: "Only the host can post here.",
+      });
+      return;
+    }
+    if (reason === "SPACE_USER_BANNED") {
+      toast.error("You were removed", {
+        description: "The host removed this ID from the Space.",
+      });
+      leaveSpace(space.id);
+      return;
+    }
+    if (reason === "SPACE_LOCKED") {
+      toast.error("Room is locked", {
+        description: "The host locked this room.",
+      });
+      return;
+    }
+    toast.error("Message failed to send — check your connection");
+  };
+
+  const loadBans = async () => {
+    setBansLoading(true);
+    try {
+      const { getSpaceBans } = await import("@/lib/heymama");
+      setBans(await getSpaceBans(space.id));
+    } finally {
+      setBansLoading(false);
     }
   };
 
   const submitText = async () => {
     const value = text.trim();
     if (!value) return;
+    if (readOnlyForMe) {
+      toast.error("Read-only room", { description: "Only the host can post here." });
+      return;
+    }
     if (presenceChannelRef.current) {
       void presenceChannelRef.current.send({
         type: "broadcast",
@@ -1009,12 +1058,10 @@ export function ChatPanel({
       } else {
         playChime("send", mutedSound || !soundEffectsEnabled);
       }
+    } else if (!isOffline()) {
+      sendFailureToast();
     } else {
-      toast.error(
-        isOffline()
-          ? "You're offline — message not sent"
-          : "Message failed to send — check your connection",
-      );
+      toast.error("You're offline — message not sent");
     }
   };
 
@@ -1871,6 +1918,156 @@ export function ChatPanel({
         </div>
       )}
 
+      {isOwner && (
+        <div className="border-b border-border bg-background/60 px-4 py-1.5 text-[11px]">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <button
+              type="button"
+              onClick={() => {
+                setShowAccessBox((v) => !v);
+                if (!showAccessBox) void loadBans();
+              }}
+              className="text-muted-foreground underline-offset-2 hover:text-primary hover:underline"
+            >
+              {showAccessBox ? "Hide room access" : "Room access (lock / read-only / kick)"}
+            </button>
+            {space.isLocked && (
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 font-semibold text-amber-600">
+                🔒 Locked
+              </span>
+            )}
+            {space.isReadonly && (
+              <span className="rounded-full bg-blue-500/15 px-2 py-0.5 font-semibold text-blue-600">
+                📖 Read-only
+              </span>
+            )}
+          </div>
+          {showAccessBox && (
+            <div className="mt-2 space-y-2 pb-1">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void (async () => {
+                      const { setSpaceLock } = await import("@/lib/heymama");
+                      const next = !space.isLocked;
+                      const ok = await setSpaceLock(space.id, next);
+                      toast[ok ? "success" : "error"](
+                        ok
+                          ? next
+                            ? "Room locked — no new guests can join"
+                            : "Room unlocked — guests can join with the code"
+                          : "Couldn't change room lock",
+                      );
+                    })();
+                  }}
+                  className="rounded-lg bg-card px-2 py-1 font-semibold ring-1 ring-input hover:ring-primary"
+                >
+                  {space.isLocked ? "Unlock room" : "Lock room"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void (async () => {
+                      const { setSpaceReadonly } = await import("@/lib/heymama");
+                      const next = !space.isReadonly;
+                      const ok = await setSpaceReadonly(space.id, next);
+                      toast[ok ? "success" : "error"](
+                        ok
+                          ? next
+                            ? "Read-only on — only you can post"
+                            : "Read-only off — everyone can post"
+                          : "Couldn't change read-only mode",
+                      );
+                    })();
+                  }}
+                  className="rounded-lg bg-card px-2 py-1 font-semibold ring-1 ring-input hover:ring-primary"
+                >
+                  {space.isReadonly ? "Allow everyone to post" : "Make read-only"}
+                </button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <input
+                  value={kickInput}
+                  onChange={(e) => setKickInput(e.target.value)}
+                  placeholder="Kick user ID (e.g. MAMA-1234-EYAB)"
+                  autoComplete="off"
+                  maxLength={64}
+                  className="min-w-0 flex-1 rounded-lg bg-card px-2 py-1 uppercase outline-none ring-1 ring-input focus:ring-primary"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = kickInput.trim();
+                    if (!target) {
+                      toast.error("Enter a user ID to kick");
+                      return;
+                    }
+                    if (
+                      !window.confirm(
+                        `Remove ${target.toUpperCase()} from this Space? They lose access immediately.`,
+                      )
+                    )
+                      return;
+                    void (async () => {
+                      const { kickSpaceUser } = await import("@/lib/heymama");
+                      const ok = await kickSpaceUser(space.id, target);
+                      toast[ok ? "success" : "error"](
+                        ok ? `${target.toUpperCase()} removed` : "Couldn't remove that user",
+                      );
+                      if (ok) {
+                        setKickInput("");
+                        void loadBans();
+                      }
+                    })();
+                  }}
+                  className="rounded-lg bg-destructive/10 px-2 py-1 font-semibold text-destructive ring-1 ring-destructive/30 hover:bg-destructive/20"
+                >
+                  Kick
+                </button>
+              </div>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => void loadBans()}
+                  className="text-muted-foreground underline-offset-2 hover:text-primary hover:underline"
+                >
+                  {bansLoading ? "Refreshing…" : `Removed users (${bans.length})`}
+                </button>
+                {bans.length > 0 && (
+                  <ul className="mt-1 space-y-1">
+                    {bans.map((b) => (
+                      <li
+                        key={b.userId}
+                        className="flex items-center justify-between gap-2 rounded-lg bg-card px-2 py-1 ring-1 ring-input"
+                      >
+                        <span className="truncate font-mono text-[10px]">{b.userId}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void (async () => {
+                              const { unbanSpaceUser } = await import("@/lib/heymama");
+                              const ok = await unbanSpaceUser(space.id, b.userId);
+                              toast[ok ? "success" : "error"](
+                                ok ? `${b.userId} can rejoin` : "Couldn't unban",
+                              );
+                              if (ok) void loadBans();
+                            })();
+                          }}
+                          className="shrink-0 font-semibold text-primary hover:underline"
+                        >
+                          Unban
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {pinnedMessage && (
         <div className="flex items-center justify-between border-b border-border bg-secondary/80 px-4 py-2 text-xs backdrop-blur-md animate-in slide-in-from-top-2 duration-150">
           <div className="flex items-center gap-2 min-w-0">
@@ -2248,12 +2445,15 @@ export function ChatPanel({
               }
             }}
             rows={1}
+            disabled={readOnlyForMe}
             placeholder={
-              editing
-                ? "Edit message..."
-                : replyTo
-                  ? `Replying to ${replyTo.authorName || "User"}...`
-                  : "Message..."
+              readOnlyForMe
+                ? "Read-only — only the host can post"
+                : editing
+                  ? "Edit message..."
+                  : replyTo
+                    ? `Replying to ${replyTo.authorName || "User"}...`
+                    : "Message..."
             }
             aria-label={editing ? "Edit message" : "Message"}
             className="thin-scroll min-w-0 max-h-32 min-h-11 flex-1 basis-24 resize-none rounded-xl bg-card px-3 py-2.5 text-sm outline-none ring-1 ring-input focus:ring-primary"
@@ -2269,7 +2469,8 @@ export function ChatPanel({
             type="button"
             onClick={() => void submitText()}
             aria-label="Send message"
-            className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-transform hover:scale-105"
+            disabled={readOnlyForMe}
+            className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-transform hover:scale-105 disabled:opacity-40"
           >
             <Send className="size-4" />
           </button>

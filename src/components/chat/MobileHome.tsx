@@ -126,7 +126,7 @@ export function MobileHome({
     }
     setBusy("join");
     try {
-      const space = await joinSpace(cleanCode, joinPassword);
+      const space = await joinSpace(cleanCode, joinPassword.trim());
       if (!space || !space.id || !space.code) {
         toast.error("Invalid Space Code", {
           description: "No Space exists with that code. Please check the code and try again.",
@@ -144,6 +144,14 @@ export function MobileHome({
         toast.error("Password required", { description: "This room needs its password." });
       } else if (msg.includes("SPACE_PASSWORD_INVALID")) {
         toast.error("Wrong password", { description: "The room password is incorrect." });
+      } else if (msg.includes("SPACE_LOCKED")) {
+        toast.error("Room is locked", {
+          description: "The host locked this room — no new guests right now.",
+        });
+      } else if (msg.includes("SPACE_USER_BANNED")) {
+        toast.error("You were removed", {
+          description: "The host removed this ID from the Space.",
+        });
       } else {
         toast.error("Couldn’t join the Space", {
           description: "Check your connection and try again.",
@@ -393,7 +401,7 @@ export function MobileHome({
                               {space.name}
                             </span>
                             <span className="shrink-0 text-[11px] font-mono text-primary">
-                              {space.hasPassword ? `🔒 ${space.code}` : space.code}
+                              {`${space.hasPassword ? "🔒 " : ""}${space.isLocked ? "🚫 " : ""}${space.isReadonly ? "📖 " : ""}${space.code}`}
                             </span>
                           </span>
                           <span className="mt-1 block truncate text-xs text-muted-foreground">

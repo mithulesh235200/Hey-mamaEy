@@ -108,7 +108,12 @@ export type Database = {
         Returns: {
           code: string;
           created_at: string;
+          expires_at: string | null;
+          has_password: boolean;
           id: string;
+          is_locked: boolean;
+          is_readonly: boolean;
+          last_activity_at: string;
           name: string;
           owner_id: string | null;
         }[];
@@ -132,11 +137,22 @@ export type Database = {
         }[];
       };
       delete_space_message: {
-        Args: { p_author_id: string; p_code: string; p_message_id: string };
+        Args: {
+          p_author_id: string;
+          p_code: string;
+          p_message_id: string;
+          p_password_hash?: string;
+        };
         Returns: boolean;
       };
       edit_space_message: {
-        Args: { p_author_id: string; p_code: string; p_message_id: string; p_text: string };
+        Args: {
+          p_author_id: string;
+          p_code: string;
+          p_message_id: string;
+          p_text: string;
+          p_password_hash?: string;
+        };
         Returns: {
           author_id: string;
           author_name: string;
@@ -170,11 +186,21 @@ export type Database = {
         };
       };
       get_space_by_code: {
-        Args: { p_code: string; p_password_hash?: string };
+        Args: {
+          p_check_join?: boolean;
+          p_code: string;
+          p_password_hash?: string;
+          p_user_id?: string;
+        };
         Returns: {
           code: string;
           created_at: string;
+          expires_at: string | null;
+          has_password: boolean;
           id: string;
+          is_locked: boolean;
+          is_readonly: boolean;
+          last_activity_at: string;
           name: string;
           owner_id: string | null;
         };
@@ -190,7 +216,7 @@ export type Database = {
         Returns: boolean;
       };
       mark_space_messages_read: {
-        Args: { p_code: string; p_reader_id: string };
+        Args: { p_code: string; p_reader_id: string; p_password_hash?: string };
         Returns: number;
       };
       register_push_token: {
@@ -208,7 +234,7 @@ export type Database = {
         }[];
       };
       get_space_messages: {
-        Args: { p_code: string; p_password_hash?: string };
+        Args: { p_code: string; p_password_hash?: string; p_user_id?: string };
         Returns: {
           author_id: string;
           author_name: string;
@@ -270,6 +296,29 @@ export type Database = {
       set_space_password: {
         Args: { p_code: string; p_owner_id: string; p_password_hash?: string };
         Returns: boolean;
+      };
+      set_space_lock: {
+        Args: { p_code: string; p_locked?: boolean; p_owner_id: string };
+        Returns: boolean;
+      };
+      set_space_readonly: {
+        Args: { p_code: string; p_owner_id: string; p_readonly?: boolean };
+        Returns: boolean;
+      };
+      kick_space_user: {
+        Args: { p_code: string; p_owner_id: string; p_target_user_id: string };
+        Returns: boolean;
+      };
+      unban_space_user: {
+        Args: { p_code: string; p_owner_id: string; p_target_user_id: string };
+        Returns: boolean;
+      };
+      get_space_bans: {
+        Args: { p_code: string; p_owner_id: string };
+        Returns: {
+          banned_at: string;
+          banned_user_id: string;
+        }[];
       };
       cleanup_expired_chats: {
         Args: Record<string, never>;
