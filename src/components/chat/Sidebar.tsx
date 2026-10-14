@@ -28,6 +28,7 @@ import {
   type Message,
   type Space,
 } from "@/lib/heymama";
+import { People } from "./People";
 
 type Theme = "dark" | "light" | "cyberpunk" | "sunset" | "ocean";
 type Accent = "cyan" | "emerald" | "violet" | "gold" | "rose";
@@ -550,6 +551,8 @@ export function Sidebar({
           />
         </div>
       </div>
+
+      <People userId={userId} variant="desktop" onDone={onNavigate} />
 
       <div className="thin-scroll flex-1 overflow-y-auto p-2">
         {spaces.length === 0 && (

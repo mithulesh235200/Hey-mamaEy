@@ -303,6 +303,8 @@ import {
   parseBackupInput,
   validatePermanentAccessKey,
 } from "./accessKey";
+// Static import is cycle-safe: contacts.ts only imports this module dynamically.
+import { exportContacts, mergeContacts } from "./contacts";
 
 /* ---------- persistence of local prefs ---------- */
 
@@ -1678,7 +1680,14 @@ export function getPermanentKey(): string {
 export function getBackupPayload(): string {
   loadPrefs();
   const key = prefs.permanentKey || "";
-  return createFullBackupPayload(key, prefs.displayName, prefs.codes);
+  // Contacts ride along so the people list survives restores.
+  let contacts: { id: string; nickname: string; spaceCode?: string }[] | undefined;
+  try {
+    contacts = exportContacts();
+  } catch {
+    contacts = undefined;
+  }
+  return createFullBackupPayload(key, prefs.displayName, prefs.codes, contacts);
 }
 
 export async function restoreFromPermanentKey(input: string): Promise<{
@@ -1701,6 +1710,13 @@ export async function restoreFromPermanentKey(input: string): Promise<{
     if (parsed.codes && parsed.codes.length > 0) {
       const mergedCodes = [...new Set([...prefs.codes, ...parsed.codes])];
       prefs.codes = mergedCodes;
+    }
+    if (parsed.contacts && parsed.contacts.length > 0) {
+      try {
+        mergeContacts(parsed.contacts);
+      } catch {
+        /* contacts restore is best-effort */
+      }
     }
 
     savePrefs();

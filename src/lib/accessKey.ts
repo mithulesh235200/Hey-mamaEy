@@ -92,23 +92,36 @@ export function deriveUserIdFromAccessKey(key: string): string {
 /**
  * Full Backup Payload structure
  */
+export type ContactPayload = {
+  id: string;
+  nickname: string;
+  spaceCode?: string;
+};
+
 export type AccessKeyPayload = {
   key: string;
   userId: string;
   displayName: string;
   codes: string[];
+  contacts?: ContactPayload[];
 };
 
 /**
  * Encodes full user profile & joined spaces into a portable access token string
  */
-export function createFullBackupPayload(key: string, displayName: string, codes: string[]): string {
+export function createFullBackupPayload(
+  key: string,
+  displayName: string,
+  codes: string[],
+  contacts?: ContactPayload[],
+): string {
   const userId = deriveUserIdFromAccessKey(key);
   const data: AccessKeyPayload = {
     key,
     userId,
     displayName: displayName || "You",
     codes: codes || [],
+    ...(contacts && contacts.length > 0 && { contacts: contacts.slice(0, 200) }),
   };
   try {
     return "HEYMAMA_KEY_" + btoa(unescape(encodeURIComponent(JSON.stringify(data))));
@@ -125,6 +138,7 @@ export function parseBackupInput(input: string): {
   userId: string;
   displayName?: string;
   codes?: string[];
+  contacts?: ContactPayload[];
 } {
   const clean = input.trim();
   if (clean.startsWith("HEYMAMA_KEY_") || clean.startsWith("HEYMAMA_BACKUP_")) {
@@ -137,15 +151,41 @@ export function parseBackupInput(input: string): {
         phrase?: string;
         displayName?: string;
         codes?: string[];
+        contacts?: unknown;
       };
       const secretKey = parsed.key || parsed.phrase;
       if (secretKey) {
         const userId = deriveUserIdFromAccessKey(secretKey);
+        let contacts: ContactPayload[] | undefined;
+        if (Array.isArray(parsed.contacts)) {
+          const cleanList: ContactPayload[] = [];
+          for (const raw of parsed.contacts.slice(0, 200)) {
+            const r = raw as Partial<ContactPayload>;
+            const id = String(r.id ?? "")
+              .trim()
+              .toUpperCase();
+            const nickname = String(r.nickname ?? "")
+              .trim()
+              .slice(0, 40);
+            if (id.length < 3 || id.length > 64 || !nickname) continue;
+            const spaceCode =
+              typeof r.spaceCode === "string" && r.spaceCode.trim()
+                ? r.spaceCode.trim()
+                : undefined;
+            cleanList.push({
+              id,
+              nickname,
+              ...(spaceCode !== undefined && { spaceCode }),
+            });
+          }
+          if (cleanList.length > 0) contacts = cleanList;
+        }
         return {
           key: secretKey,
           userId,
           ...(parsed.displayName !== undefined && { displayName: parsed.displayName }),
           ...(parsed.codes !== undefined && { codes: parsed.codes }),
+          ...(contacts !== undefined && { contacts }),
         };
       }
     } catch {

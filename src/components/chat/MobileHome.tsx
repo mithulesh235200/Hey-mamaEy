@@ -11,6 +11,7 @@ import {
   Settings,
   ShieldCheck,
   UserRound,
+  Users,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,6 +25,7 @@ import {
   type Message,
   type Space,
 } from "@/lib/heymama";
+import { People } from "./People";
 
 type MobileHomeProps = {
   userId: string;
@@ -39,7 +41,7 @@ type MobileHomeProps = {
   onClose?: () => void;
 };
 
-export type MobileTab = "spaces" | "profile";
+export type MobileTab = "spaces" | "people" | "profile";
 
 export function MobileHome({
   userId,
@@ -182,7 +184,7 @@ export function MobileHome({
     <main className="mobile-home md:hidden">
       <header className="mobile-home-header">
         <div className="flex min-w-0 items-center gap-3">
-          {tab === "profile" && (
+          {tab !== "spaces" && (
             <button
               type="button"
               onClick={() => onTabChange("spaces")}
@@ -203,7 +205,7 @@ export function MobileHome({
               HeyMamaEy
             </p>
             <h1 className="truncate text-lg font-bold leading-tight">
-              {tab === "spaces" ? "Your spaces" : "Your profile"}
+              {tab === "spaces" ? "Your spaces" : tab === "people" ? "People" : "Your profile"}
             </h1>
           </div>
         </div>
@@ -437,6 +439,8 @@ export function MobileHome({
               )}
             </section>
           </div>
+        ) : tab === "people" ? (
+          <People userId={userId} variant="mobile" onDone={onClose} />
         ) : (
           <div className="mobile-profile-page">
             <div className="mobile-profile-hero">
@@ -508,6 +512,15 @@ export function MobileHome({
         >
           <Hash className="size-5" aria-hidden="true" />
           <span>Spaces</span>
+        </button>
+        <button
+          type="button"
+          aria-current={tab === "people" ? "page" : undefined}
+          onClick={() => onTabChange("people")}
+          className={`mobile-nav-item ${tab === "people" ? "is-active" : ""}`}
+        >
+          <Users className="size-5" aria-hidden="true" />
+          <span>People</span>
         </button>
         <button
           type="button"
