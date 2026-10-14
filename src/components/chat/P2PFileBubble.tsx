@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CloudDownload, Download, FileIcon, HardDrive, ShieldCheck, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Message } from "@/lib/heymama";
@@ -44,6 +44,8 @@ export function P2PFileBubble({
     fileName,
   });
   const [savingBackup, setSavingBackup] = useState(false);
+  const extraSubRef = useRef<(() => void) | null>(null);
+  const [acceptBusy, setAcceptBusy] = useState(false);
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
@@ -62,13 +64,24 @@ export function P2PFileBubble({
 
     return () => {
       if (unsubscribe) unsubscribe();
+      if (extraSubRef.current) {
+        extraSubRef.current();
+        extraSubRef.current = null;
+      }
     };
   }, [transferId, isSender]);
 
   const handleStartReceive = () => {
-    const receiver = createP2PReceiver(transferId, currentUserId);
-    receiver.subscribe(setProgress);
-    void receiver.start();
+    if (acceptBusy) return;
+    setAcceptBusy(true);
+    try {
+      const receiver = createP2PReceiver(transferId, currentUserId);
+      if (extraSubRef.current) extraSubRef.current();
+      extraSubRef.current = receiver.subscribe(setProgress);
+      void receiver.start().finally(() => setAcceptBusy(false));
+    } catch {
+      setAcceptBusy(false);
+    }
   };
 
   const handleDownload = () => {
@@ -81,6 +94,17 @@ export function P2PFileBubble({
     a.click();
     document.body.removeChild(a);
   };
+
+  // Revoke object URLs on unmount / transfer switch to avoid blob memory leaks.
+  useEffect(() => {
+    return () => {
+      try {
+        if (progress.blobUrl?.startsWith("blob:")) URL.revokeObjectURL(progress.blobUrl);
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [progress.blobUrl]);
 
   const handleBackupDownload = async () => {
     if (!backupUrl || savingBackup) return;

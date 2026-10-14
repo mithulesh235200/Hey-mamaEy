@@ -664,7 +664,9 @@ export function ChatPanel({
   useEffect(() => {
     if (!space?.id) return;
     try {
-      const saved = localStorage.getItem(`heymamaey.disappearing.${space.id}`) as DisappearingTimer | null;
+      const saved = localStorage.getItem(
+        `heymamaey.disappearing.${space.id}`,
+      ) as DisappearingTimer | null;
       setDisappearingTimer(saved === "24h" || saved === "7d" || saved === "30d" ? saved : "off");
     } catch {
       setDisappearingTimer("off");
@@ -874,6 +876,9 @@ export function ChatPanel({
     if (!nearBottomRef.current) return;
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, space?.id]);
+
+  // Hooks must run before any early return (Rules of Hooks).
+  const online = useOnline();
 
   if (!space) {
     return (
@@ -1142,8 +1147,7 @@ export function ChatPanel({
             description: "So it stays downloadable even if you go offline.",
           });
           backupUrl =
-            (await uploadAttachment(space.code, file, verdict.safeName, verdict.mime)) ??
-            undefined;
+            (await uploadAttachment(space.code, file, verdict.safeName, verdict.mime)) ?? undefined;
         } catch {
           backupUrl = undefined;
         }
@@ -1336,7 +1340,6 @@ export function ChatPanel({
   const typingArray = typingIndicatorsEnabled ? [...typingUsers.values()] : [];
   const otherMembers = activeMembers.filter((m) => m.userId !== userId);
   const otherMemberNames = [...new Set(otherMembers.map((m) => m.name))];
-  const online = useOnline();
 
   const getWallpaperStyle = () => {
     if (wallpaper === "dots") {
@@ -1730,7 +1733,9 @@ export function ChatPanel({
           className="flex items-center justify-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-1.5 text-[11px] font-semibold text-amber-300"
         >
           <WifiOff className="size-3.5" />
-          <span>You&apos;re offline — showing saved chats. Text will queue and send on reconnect.</span>
+          <span>
+            You&apos;re offline — showing saved chats. Text will queue and send on reconnect.
+          </span>
         </div>
       )}
 
@@ -1792,7 +1797,7 @@ export function ChatPanel({
                 type="password"
                 value={roomPasswordSettingInput}
                 onChange={(e) => setRoomPasswordSettingInput(e.target.value)}
-                placeholder="4+ chars, empty removes"
+                placeholder={space.hasPassword ? "New 4+ chars, or Remove below" : "4+ chars"}
                 autoComplete="new-password"
                 maxLength={64}
                 className="min-w-0 flex-1 rounded-lg bg-card px-2 py-1 outline-none ring-1 ring-input focus:ring-primary"
@@ -1801,14 +1806,29 @@ export function ChatPanel({
                 type="button"
                 onClick={() => {
                   void (async () => {
+                    const input = roomPasswordSettingInput.trim();
+                    if (input && input.length < 4) {
+                      toast.error("Password too short", {
+                        description: "Use 4+ characters.",
+                      });
+                      return;
+                    }
                     const { setSpacePassword } = await import("@/lib/heymama");
                     const ok = await setSpacePassword(space.id, roomPasswordSettingInput);
-                    toast[ok ? "success" : "error"](
-                      ok ? "Room password updated" : "Couldn't update password",
-                    );
                     if (ok) {
+                      toast.success(
+                        input
+                          ? space.hasPassword
+                            ? "Room password changed"
+                            : "Room password added"
+                          : "Room password removed — room is now open",
+                      );
                       setRoomPasswordSettingInput("");
                       setShowRoomPasswordBox(false);
+                    } else {
+                      toast.error("Couldn't update password", {
+                        description: "Only the Space owner can change it.",
+                      });
                     }
                   })();
                 }}
@@ -1816,6 +1836,36 @@ export function ChatPanel({
               >
                 Save
               </button>
+              {space.hasPassword && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        "Remove the room password? The Space becomes open to anyone with the code. Messages encrypted with the old password may stay locked.",
+                      )
+                    )
+                      return;
+                    void (async () => {
+                      const { setSpacePassword } = await import("@/lib/heymama");
+                      const ok = await setSpacePassword(space.id, "");
+                      toast[ok ? "success" : "error"](
+                        ok
+                          ? "Room password removed — room is now open"
+                          : "Couldn't remove password",
+                      );
+                      if (ok) {
+                        setRoomPasswordSettingInput("");
+                        setShowRoomPasswordBox(false);
+                      }
+                    })();
+                  }}
+                  title="Remove the room password"
+                  className="rounded-lg bg-destructive/10 px-2 py-1 font-semibold text-destructive ring-1 ring-destructive/30 hover:bg-destructive/20"
+                >
+                  Remove
+                </button>
+              )}
             </span>
           )}
         </div>
@@ -2198,7 +2248,13 @@ export function ChatPanel({
               }
             }}
             rows={1}
-            placeholder={editing ? "Edit message..." : replyTo ? `Replying to ${replyTo.authorName || "User"}...` : "Message..."}
+            placeholder={
+              editing
+                ? "Edit message..."
+                : replyTo
+                  ? `Replying to ${replyTo.authorName || "User"}...`
+                  : "Message..."
+            }
             aria-label={editing ? "Edit message" : "Message"}
             className="thin-scroll min-w-0 max-h-32 min-h-11 flex-1 basis-24 resize-none rounded-xl bg-card px-3 py-2.5 text-sm outline-none ring-1 ring-input focus:ring-primary"
           />

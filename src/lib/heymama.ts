@@ -103,8 +103,12 @@ function loadOfflineSnapshot(): OfflineSnapshot | null {
     const parsed = JSON.parse(raw) as Partial<OfflineSnapshot>;
     if (!Array.isArray(parsed.spaces) || !Array.isArray(parsed.messages)) return null;
     return {
-      spaces: parsed.spaces.filter((s) => s && typeof s.id === "string" && typeof s.code === "string"),
-      messages: parsed.messages.filter((m) => m && typeof m.id === "string" && typeof m.spaceId === "string"),
+      spaces: parsed.spaces.filter(
+        (s) => s && typeof s.id === "string" && typeof s.code === "string",
+      ),
+      messages: parsed.messages.filter(
+        (m) => m && typeof m.id === "string" && typeof m.spaceId === "string",
+      ),
       savedAt: typeof parsed.savedAt === "number" ? parsed.savedAt : 0,
     };
   } catch {
@@ -482,7 +486,7 @@ const toMessage = (r: MessageRow): Message => {
   // classic kinds (text/image/video/audio/file). See insertMessage below.
   let kind = r.kind as MediaKind;
   let text: string | undefined = r.text ?? undefined;
-  let fileName: string | undefined = r.file_name ?? undefined;
+  const fileName: string | undefined = r.file_name ?? undefined;
   let fileSize: number | undefined = r.file_size != null ? Number(r.file_size) : undefined;
   let threadParentId: string | undefined;
 
@@ -595,7 +599,11 @@ async function decryptIfNeeded(msg: Message, code: string): Promise<Message> {
     const { decryptRoomText, getRoomPassword } = await import("./roomCrypto");
     const plain = await decryptRoomText(msg.text, code, getRoomPassword(code));
     if (plain === null) {
-      return { ...msg, text: "🔒 Encrypted message — enter the Space password to decrypt.", locked: true };
+      return {
+        ...msg,
+        text: "🔒 Encrypted message — enter the Space password to decrypt.",
+        locked: true,
+      };
     }
     // Re-run wire decoding on the decrypted payload (thread/location markers).
     const decoded = toMessage({
@@ -621,8 +629,8 @@ async function decryptIfNeeded(msg: Message, code: string): Promise<Message> {
 async function fetchMessages(code: string): Promise<Message[]> {
   try {
     const { getRoomPassword, hashRoomPassword } = await import("./roomCrypto");
-    const pw = getRoomPassword(code);
-    const p_password_hash = pw.trim() ? await hashRoomPassword(pw) : null;
+    const pw = getRoomPassword(code).trim();
+    const p_password_hash = pw ? await hashRoomPassword(pw) : null;
     const { data, error } = await supabase.rpc("get_space_messages", {
       p_code: code,
       ...(p_password_hash !== null && { p_password_hash }),
@@ -738,13 +746,50 @@ async function loadSpaces() {
       () => undefined,
     );
     const { getRoomPassword } = await import("./roomCrypto");
+    // Keep password-gated rooms visible even when the cached password is
+    // missing (fresh tab before migration, user cleared storage, join on a
+    // second device). Previously these were filtered out here, which made a
+    // freshly created password Space "automatically disappear" a moment later.
+    const prevByCode = new Map(state.spaces.map((s) => [s.code, s]));
+    const snapByCode = new Map((loadOfflineSnapshot()?.spaces ?? []).map((s) => [s.code, s]));
+    const lockedPlaceholder = (code: string): Space => {
+      const prev = prevByCode.get(code);
+      if (prev) return { ...prev, hasPassword: true };
+      const snap = snapByCode.get(code);
+      if (snap) return { ...snap, hasPassword: true };
+      return {
+        // Stable synthetic id so the row survives reloads until the user
+        // unlocks it (unlock swaps in the real server id).
+        id: `locked-${code.replace(/[^A-Z0-9]/gi, "").toUpperCase()}`,
+        name: "Locked Space",
+        code,
+        createdAt: Date.now(),
+        hasPassword: true,
+      };
+    };
     const results = await Promise.all(
       prefs.codes.map(async (code) => {
         try {
-          return await fetchSpace(code, getRoomPassword(code));
-        } catch {
-          // Password-gated or expired rooms stay listed locally; user can unlock or leave.
-          return null;
+          const space = await fetchSpace(code, getRoomPassword(code));
+          // Null = not found on server (deleted/expired). Fall back to the
+          // local copy only when we know it is password-gated; genuinely
+          // deleted rooms should drop out. We can't tell here, so keep the
+          // local locked copy rather than silently wiping chat history.
+          if (!space) {
+            const local = prevByCode.get(code) ?? snapByCode.get(code);
+            if (local?.hasPassword) return local;
+            if (local && getRoomPassword(code)) return local;
+            return null;
+          }
+          return space;
+        } catch (e) {
+          // Password-gated rooms stay listed locally; user can unlock or leave.
+          if (e instanceof Error && e.message.startsWith("SPACE_PASSWORD_")) {
+            return lockedPlaceholder(code);
+          }
+          const local = prevByCode.get(code) ?? snapByCode.get(code);
+          if (local) return local;
+          return lockedPlaceholder(code);
         }
       }),
     );
@@ -913,8 +958,11 @@ export async function createSpace(
 ): Promise<Space | null> {
   const password = (opts?.password ?? "").trim();
   const mode: RoomMode = opts?.mode === "quick" ? "quick" : "private";
-  if (password && password.length < 4) throw new Error("Room password must be at least 4 characters.");
-  const p_password_hash = password ? await (await import("./roomCrypto")).hashRoomPassword(password) : null;
+  if (password && password.length < 4)
+    throw new Error("Room password must be at least 4 characters.");
+  const p_password_hash = password
+    ? await (await import("./roomCrypto")).hashRoomPassword(password)
+    : null;
   const { data, error } = await supabase.rpc("create_space", {
     p_name: name.trim() || "New Space",
     p_owner_id: state.userId,
@@ -939,6 +987,7 @@ export async function createSpace(
     () => undefined,
   );
   set({ spaces: [space, ...state.spaces], activeSpaceId: space.id });
+  persistOfflineSnapshot();
   return space;
 }
 
@@ -950,16 +999,21 @@ export async function joinSpace(rawCode: string, password = ""): Promise<Space |
   if (!formatted) return null;
 
   const local = state.spaces.find((s) => s.code === formatted);
-  if (local) {
-    if (password.trim()) setRoomPassword(local.code, password.trim());
+  // A synthetic "locked-…" row (or any row when a password was just typed)
+  // must still hit the server so the real id + history replace the placeholder.
+  const mustFetch = !local || local.id.startsWith("locked-") || Boolean(password.trim());
+  if (local && !mustFetch) {
     set({ activeSpaceId: local.id });
     void registerMembership(local.code, state.userId);
     // Re-decrypt history now that a password may have been supplied.
     void refreshActiveSpace();
     return local;
   }
+  if (local && password.trim()) setRoomPassword(local.code, password.trim());
 
-  const space = await fetchSpace(formatted, password.trim());
+  // Password errors propagate so the UI can prompt instead of "invalid code".
+  const { getRoomPassword: getPw } = await import("./roomCrypto");
+  const space: Space | null = await fetchSpace(formatted, password.trim() || getPw(formatted));
   if (!space || !space.id || !space.code) return null;
   if (password.trim()) setRoomPassword(space.code, password.trim());
   rememberCode(space.code);
@@ -969,7 +1023,7 @@ export async function joinSpace(rawCode: string, password = ""): Promise<Space |
   const existingIds = new Set(state.messages.map((m) => m.id));
 
   set({
-    spaces: [space, ...state.spaces.filter((s) => s.id !== space.id)],
+    spaces: [space, ...state.spaces.filter((s) => s.id !== space.id && s.code !== space.code)],
     messages: [...state.messages, ...history.filter((m) => !existingIds.has(m.id))],
     activeSpaceId: space.id,
   });
@@ -991,7 +1045,9 @@ export async function setSpacePassword(spaceId: string, password: string): Promi
   });
   if (error || data !== true) return false;
   setRoomPassword(space.code, pw);
-  set({ spaces: state.spaces.map((s) => (s.id === spaceId ? { ...s, hasPassword: Boolean(pw) } : s)) });
+  set({
+    spaces: state.spaces.map((s) => (s.id === spaceId ? { ...s, hasPassword: Boolean(pw) } : s)),
+  });
   return true;
 }
 
@@ -1001,9 +1057,32 @@ export async function unlockSpaceMessages(code: string, password: string): Promi
   setRoomPassword(code, password.trim());
   const space = state.spaces.find((s) => s.code === code);
   if (!space) return;
+  // If this was a synthetic locked placeholder, swap in the real server row
+  // (real uuid) so messages + reads attach to the correct id.
+  try {
+    const real = await fetchSpace(code, password.trim());
+    if (real && real.id) {
+      const oldIds = new Set(state.spaces.filter((s) => s.code === code).map((s) => s.id));
+      set({
+        spaces: state.spaces.filter((s) => s.code !== code).concat([real]),
+        messages: state.messages.filter((m) => !oldIds.has(m.spaceId)),
+        activeSpaceId:
+          state.activeSpaceId && oldIds.has(state.activeSpaceId) ? real.id : state.activeSpaceId,
+      });
+    }
+  } catch {
+    /* wrong password — keep placeholder, messages stay locked */
+  }
+  const current = state.spaces.find((s) => s.code === code);
+  if (!current) return;
   const fresh = await fetchMessages(code);
+  const kept = state.messages.filter(
+    (m) =>
+      m.spaceId !== current.id &&
+      !state.spaces.some((s) => s.code === code && s.id === m.spaceId && s.id !== current.id),
+  );
   set({
-    messages: [...state.messages.filter((m) => m.spaceId !== space.id), ...fresh],
+    messages: [...kept.filter((m) => m.spaceId !== current.id), ...fresh],
   });
   persistOfflineSnapshot();
 }
@@ -1102,8 +1181,8 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
 
   try {
     const { getRoomPassword, hashRoomPassword } = await import("./roomCrypto");
-    const pw = getRoomPassword(space.code);
-    const p_password_hash = pw.trim() ? await hashRoomPassword(pw) : null;
+    const pw = getRoomPassword(space.code).trim();
+    const p_password_hash = pw ? await hashRoomPassword(pw) : null;
     const { data, error } = await supabase.rpc("send_space_message", {
       p_code: space.code,
       p_author_id: state.userId,
@@ -1172,9 +1251,12 @@ export async function editMessage(messageId: string, spaceId: string, text: stri
   const space = state.spaces.find((item) => item.id === spaceId);
   if (!space) return null;
   let wireText = text.trim();
+  let pwHash: string | null = null;
   try {
-    const { encryptRoomText, getRoomPassword } = await import("./roomCrypto");
+    const { encryptRoomText, getRoomPassword, hashRoomPassword } = await import("./roomCrypto");
+    const pw = getRoomPassword(space.code).trim();
     wireText = await encryptRoomText(wireText, space.code, getRoomPassword(space.code));
+    pwHash = pw ? await hashRoomPassword(pw) : null;
   } catch {
     return null;
   }
@@ -1183,6 +1265,7 @@ export async function editMessage(messageId: string, spaceId: string, text: stri
     p_message_id: messageId,
     p_author_id: state.userId,
     p_text: wireText,
+    ...(pwHash !== null && { p_password_hash: pwHash }),
   });
   if (error) return null;
   const row = (Array.isArray(data) ? data[0] : data) as MessageRow | null;
@@ -1196,10 +1279,14 @@ export async function editMessage(messageId: string, spaceId: string, text: stri
 export async function deleteMessage(messageId: string, spaceId: string) {
   const space = state.spaces.find((item) => item.id === spaceId);
   if (!space) return false;
+  const { hashRoomPassword, getRoomPassword } = await import("./roomCrypto");
+  const pw = getRoomPassword(space.code).trim();
+  const pwHash = pw ? await hashRoomPassword(pw) : null;
   const { data, error } = await supabase.rpc("delete_space_message", {
     p_code: space.code,
     p_message_id: messageId,
     p_author_id: state.userId,
+    ...(pwHash !== null && { p_password_hash: pwHash }),
   });
   if (error || data !== true) return false;
   set({ messages: state.messages.filter((item) => item.id !== messageId) });
@@ -1325,9 +1412,13 @@ export function markSpaceAsRead(spaceId: string) {
 }
 
 export async function markSpaceMessagesRead(spaceCode: string, readerId: string): Promise<boolean> {
+  const { getRoomPassword, hashRoomPassword } = await import("./roomCrypto");
+  const pw = getRoomPassword(spaceCode).trim();
+  const pwHash = pw ? await hashRoomPassword(pw) : null;
   const { error } = await supabase.rpc("mark_space_messages_read", {
     p_code: spaceCode,
     p_reader_id: readerId,
+    ...(pwHash !== null && { p_password_hash: pwHash }),
   });
   return !error;
 }

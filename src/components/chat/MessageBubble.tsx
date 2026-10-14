@@ -181,18 +181,9 @@ export function MessageBubble({
     };
   }, [showMenu, showReactions]);
 
-  // Stop speech when this bubble unmounts (space switch / delete).
-  useEffect(() => {
-    return () => {
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        try {
-          window.speechSynthesis.cancel();
-        } catch {
-          /* ignore */
-        }
-      }
-    };
-  }, []);
+  // No global cancel here: cancelling on every bubble unmount kills readout
+  // of other messages when switching spaces / deleting one message.
+  // Speech is stopped explicitly by the speaking bubble itself.
 
   const saveFile = async () => {
     if (!message.dataUrl || saving) return;

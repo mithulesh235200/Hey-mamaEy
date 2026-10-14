@@ -73,6 +73,8 @@ type NewMessage = {
 };
 
 function snippetFor(msg: NewMessage): string {
+  // Never leak E2E ciphertext into push payloads.
+  if (msg.text?.startsWith("__enc1__.")) return "📩 sent a new message";
   if (msg.kind === "text" && msg.text) {
     if (msg.text.startsWith("__location__")) return "📍 shared a location";
     return msg.text.length > 120 ? msg.text.slice(0, 120) + "…" : msg.text;
@@ -81,7 +83,9 @@ function snippetFor(msg: NewMessage): string {
   if (msg.kind === "video") return "🎬 sent a video";
   if (msg.kind === "audio") return "🎤 sent a voice note";
   if (msg.kind === "file") {
-    return msg.text?.startsWith("__p2p__:") ? "⚡ shared a file (P2P)" : `📎 ${msg.file_name || "sent a file"}`;
+    return msg.text?.startsWith("__p2p__:")
+      ? "⚡ shared a file (P2P)"
+      : `📎 ${msg.file_name || "sent a file"}`;
   }
   return "sent a message";
 }

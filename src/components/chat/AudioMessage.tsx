@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pause, Play, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -7,9 +7,22 @@ type VoiceFx = "normal" | "chipmunk" | "robot" | "deep";
 export function AudioMessage({ dataUrl, mine }: { dataUrl: string; mine?: boolean }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [audioError, setAudioError] = useState(false);
   const [speed, setSpeed] = useState<1 | 1.5 | 2>(1);
   const [voiceFx, setVoiceFx] = useState<VoiceFx>("normal");
   const [showFxMenu, setShowFxMenu] = useState(false);
+
+  // Pause on unmount / src switch so audio never bleeds into the next Space.
+  useEffect(() => {
+    const a = audioRef.current;
+    return () => {
+      try {
+        a?.pause();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [dataUrl]);
 
   const toggle = () => {
     const a = audioRef.current;
@@ -151,10 +164,19 @@ export function AudioMessage({ dataUrl, mine }: { dataUrl: string; mine?: boolea
         <audio
           ref={audioRef}
           src={dataUrl}
-          onPlay={() => setPlaying(true)}
+          preload="metadata"
+          onPlay={() => {
+            setPlaying(true);
+            setAudioError(false);
+          }}
           onPause={() => setPlaying(false)}
           onEnded={() => setPlaying(false)}
+          onError={() => {
+            setPlaying(false);
+            setAudioError(true);
+          }}
         />
+        {audioError && <p className="mt-1 text-[10px] text-muted-foreground">Audio unavailable</p>}
       </div>
     </div>
   );

@@ -39,13 +39,20 @@ async function deriveRoomKey(code: string, password: string): Promise<CryptoKey>
   const hit = keyCache.get(ck);
   if (hit) return hit;
   const task = (async (): Promise<CryptoKey> => {
-    const secret = password ? `${code.toUpperCase()}::${password}` : `code-only::${code.toUpperCase()}`;
+    const secret = password
+      ? `${code.toUpperCase()}::${password}`
+      : `code-only::${code.toUpperCase()}`;
     const salt = enc.encode(`heymamaey-room-v1:${code.toUpperCase()}`);
     const base = await crypto.subtle.importKey("raw", enc.encode(secret), "PBKDF2", false, [
       "deriveKey",
     ]);
     return crypto.subtle.deriveKey(
-      { name: "PBKDF2", salt: salt as unknown as BufferSource, iterations: 100_000, hash: "SHA-256" },
+      {
+        name: "PBKDF2",
+        salt: salt as unknown as BufferSource,
+        iterations: 100_000,
+        hash: "SHA-256",
+      },
       base,
       { name: "AES-GCM", length: 256 },
       false,
@@ -109,23 +116,65 @@ export async function hashRoomPassword(password: string): Promise<string> {
     .join("");
 }
 
-// ---- per-session room password cache (sessionStorage: tab-scoped, gone on close) ----
+// ---- room password cache (localStorage: survives reload/new-tab so locked
+// Spaces never vanish; cleared only on Leave / password removal) ----
 
 const MEMO = new Map<string, string>();
 
+function storageGet(key: string): string {
+  try {
+    const v = window.localStorage.getItem(key);
+    if (v) return v;
+  } catch {
+    /* ignore */
+  }
+  try {
+    return window.sessionStorage.getItem(key) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function storageSet(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* ignore */
+  }
+  try {
+    window.sessionStorage.setItem(key, value);
+  } catch {
+    /* ignore */
+  }
+}
+
+function storageRemove(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
+}
+
 export function setRoomPassword(code: string, password: string): void {
   const c = code.toUpperCase();
+  const key = `heymamaey.roompw.${c}`;
   if (password) {
     MEMO.set(c, password);
     try {
-      sessionStorage.setItem(`heymamaey.roompw.${c}`, password);
+      storageSet(key, password);
     } catch {
       /* ignore */
     }
   } else {
     MEMO.delete(c);
     try {
-      sessionStorage.removeItem(`heymamaey.roompw.${c}`);
+      storageRemove(key);
     } catch {
       /* ignore */
     }
@@ -137,7 +186,7 @@ export function getRoomPassword(code: string): string {
   const memo = MEMO.get(c);
   if (memo !== undefined) return memo;
   try {
-    const s = sessionStorage.getItem(`heymamaey.roompw.${c}`) ?? "";
+    const s = storageGet(`heymamaey.roompw.${c}`) ?? "";
     if (s) MEMO.set(c, s);
     return s;
   } catch {

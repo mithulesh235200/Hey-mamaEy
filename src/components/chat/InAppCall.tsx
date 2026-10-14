@@ -278,7 +278,7 @@ export function InAppCall({
               }
             : false,
       });
-    } catch {
+    } catch (err) {
       if (requestedCallMode === "video") {
         // Fall back to voice if video permissions fail
         try {
@@ -286,11 +286,11 @@ export function InAppCall({
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
             video: false,
           });
-        } catch (error) {
-          throw new Error(getMediaPermissionMessage(error, requestedCallMode));
+        } catch (fallbackErr) {
+          throw new Error(getMediaPermissionMessage(fallbackErr, requestedCallMode));
         }
       }
-      throw new Error(getMediaPermissionMessage(error, requestedCallMode));
+      throw new Error(getMediaPermissionMessage(err, requestedCallMode));
     }
   };
 

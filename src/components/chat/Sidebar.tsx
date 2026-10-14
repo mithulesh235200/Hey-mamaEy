@@ -76,9 +76,15 @@ export function Sidebar({
   const [restoreId, setRestoreId] = useState("");
   const [showRestore, setShowRestore] = useState(false);
   const [userStatus, setUserStatus] = useState<string>(() => {
-    return localStorage.getItem("heymamaey.userStatus") || "✨ Online";
+    if (typeof window === "undefined") return "✨ Online";
+    try {
+      return localStorage.getItem("heymamaey.userStatus") || "✨ Online";
+    } catch {
+      return "✨ Online";
+    }
   });
   const [showStatusMenu, setShowStatusMenu] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window !== "undefined") {
@@ -88,7 +94,12 @@ export function Sidebar({
   });
 
   const [accent, setAccent] = useState<Accent>(() => {
-    return (localStorage.getItem("heymamaey.accent") as Accent) || "cyan";
+    if (typeof window === "undefined") return "cyan";
+    try {
+      return (localStorage.getItem("heymamaey.accent") as Accent) || "cyan";
+    } catch {
+      return "cyan";
+    }
   });
 
   useEffect(() => {
@@ -137,6 +148,7 @@ export function Sidebar({
   };
 
   const handleCreate = async () => {
+    if (busy) return;
     if (!displayName.trim() || displayName === "You") {
       toast.error("Add your name first", { description: "Your name is shown in the Space." });
       return;
@@ -147,6 +159,7 @@ export function Sidebar({
       });
       return;
     }
+    setBusy(true);
     try {
       const space = await createSpace(newName || `Space of ${userId.slice(0, 9)}`, {
         ...(newPassword.trim() && { password: newPassword.trim() }),
@@ -176,10 +189,13 @@ export function Sidebar({
             : message,
       });
       return;
+    } finally {
+      setBusy(false);
     }
   };
 
   const handleJoin = async () => {
+    if (busy) return;
     if (!displayName.trim() || displayName === "You") {
       toast.error("Add your name first", { description: "Your name is shown in the Space." });
       return;
@@ -189,8 +205,9 @@ export function Sidebar({
       toast.error("Enter a Space Code", { description: "Type a Space Code to join." });
       return;
     }
+    setBusy(true);
     try {
-      const space = await joinSpace(cleanCode, joinPassword);
+      const space = await joinSpace(cleanCode, joinPassword.trim());
       if (!space || !space.id || !space.code) {
         toast.error("Invalid Space Code", {
           description:
@@ -200,6 +217,7 @@ export function Sidebar({
       }
       setJoinCode("");
       setJoinPassword("");
+      markSpaceAsRead(space.id);
       toast.success(`Joined ${space.name}`);
       onNavigate?.();
     } catch (e) {
@@ -217,6 +235,8 @@ export function Sidebar({
       toast.error("Invalid Space Code", {
         description: "No Space exists with that code. Please check the code and try again.",
       });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -224,6 +244,8 @@ export function Sidebar({
     const list = messages.filter((m) => m.spaceId === spaceId);
     const last = list[list.length - 1];
     if (!last) return "No messages yet";
+    if (last.locked) return "🔒 Encrypted message";
+    if (last.text?.startsWith("__enc1__.")) return "🔒 Encrypted message";
     if (last.kind === "text") return last.text ?? "";
     if (last.kind === "location") return "📍 Location shared";
     if (last.kind === "p2p_file") return "⚡ P2P file shared";

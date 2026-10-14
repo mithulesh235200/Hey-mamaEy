@@ -49,13 +49,56 @@ const EXT_MIME: Record<string, string[]> = {
 };
 
 const DENY_EXT = new Set([
-  "html", "htm", "xhtml", "shtml", "svg", "svgz",
-  "js", "mjs", "cjs", "jsx", "tsx", "ts",
-  "exe", "dll", "msi", "bat", "cmd", "com", "scr", "pif",
-  "ps1", "vbs", "vbe", "jse", "wsf", "wsh", "jar", "apk",
-  "aab", "ipa", "iso", "dmg", "img", "swf", "php", "phtml",
-  "phar", "py", "pyc", "rb", "pl", "sh", "bash", "zsh",
-  "lnk", "url", "scf", "hta", "msc", "reg",
+  "html",
+  "htm",
+  "xhtml",
+  "shtml",
+  "svg",
+  "svgz",
+  "js",
+  "mjs",
+  "cjs",
+  "jsx",
+  "tsx",
+  "ts",
+  "exe",
+  "dll",
+  "msi",
+  "bat",
+  "cmd",
+  "com",
+  "scr",
+  "pif",
+  "ps1",
+  "vbs",
+  "vbe",
+  "jse",
+  "wsf",
+  "wsh",
+  "jar",
+  "apk",
+  "aab",
+  "ipa",
+  "iso",
+  "dmg",
+  "img",
+  "swf",
+  "php",
+  "phtml",
+  "phar",
+  "py",
+  "pyc",
+  "rb",
+  "pl",
+  "sh",
+  "bash",
+  "zsh",
+  "lnk",
+  "url",
+  "scf",
+  "hta",
+  "msc",
+  "reg",
 ]);
 
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -109,7 +152,10 @@ function magicOk(ext: string, head: Uint8Array, textHead: string): boolean {
       if (startsWith(head, [0x4d, 0x5a])) return false;
       if (startsWith(head, [0x7f, 0x45, 0x4c, 0x46])) return false;
       if (startsWith(head, [0x50, 0x4b, 0x03, 0x04])) return false;
-      const t = textHead.replace(/^\uFEFF/, "").trimStart().slice(0, 200);
+      const t = textHead
+        .replace(/^\uFEFF/, "")
+        .trimStart()
+        .slice(0, 200);
       if (/^<!doctype\s+html/i.test(t)) return false;
       if (/^<(html|svg|script|iframe|object|embed|link|meta|xml)[\s>]/i.test(t)) return false;
       if (/^<\?xml/i.test(t)) return false;
@@ -148,7 +194,11 @@ async function virusTotalLookup(
       detail: `malicious=${stats["malicious"] ?? 0} suspicious=${stats["suspicious"] ?? 0}`,
     };
   } catch (e) {
-    return { checked: false, malicious: false, detail: e instanceof Error ? e.message : "VT error" };
+    return {
+      checked: false,
+      malicious: false,
+      detail: e instanceof Error ? e.message : "VT error",
+    };
   }
 }
 
@@ -166,7 +216,11 @@ Deno.serve(async (req: Request) => {
     if (!SUPABASE_URL || !SERVICE_KEY) return json({ error: "Missing secrets" }, 500);
 
     const payload = (await req.json()) as {
-      record?: { name?: string; bucket_id?: string; metadata?: { mimetype?: string; size?: number } };
+      record?: {
+        name?: string;
+        bucket_id?: string;
+        metadata?: { mimetype?: string; size?: number };
+      };
     };
     const record = payload.record;
     const name = record?.name || "";
@@ -189,11 +243,16 @@ Deno.serve(async (req: Request) => {
     }
 
     const svcHeaders = { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` };
+    // Encode each path segment separately: encoding the whole name turns
+    // `CODE/file.jpg` into `CODE%2Ffile.jpg` (404 → fetch-failed).
+    const objectPath = name
+      .split("/")
+      .map((seg) => encodeURIComponent(seg))
+      .join("/");
     // Download the head (static checks) — full body only if VT lookup needs hashing.
-    const objRes = await fetch(
-      `${SUPABASE_URL}/storage/v1/object/space-media/${encodeURIComponent(name)}`,
-      { headers: svcHeaders },
-    );
+    const objRes = await fetch(`${SUPABASE_URL}/storage/v1/object/space-media/${objectPath}`, {
+      headers: svcHeaders,
+    });
     if (!objRes.ok) return json({ verdict: "fetch-failed", status: objRes.status });
     const bytes = new Uint8Array(await objRes.arrayBuffer());
     if (bytes.length > MAX_BYTES) reasons.push(`size ${bytes.length} exceeds 20 MB cap`);
@@ -223,10 +282,10 @@ Deno.serve(async (req: Request) => {
     }
 
     // Failure: delete the object so it can never be served.
-    await fetch(
-      `${SUPABASE_URL}/storage/v1/object/space-media/${encodeURIComponent(name)}`,
-      { method: "DELETE", headers: svcHeaders },
-    );
+    await fetch(`${SUPABASE_URL}/storage/v1/object/space-media/${objectPath}`, {
+      method: "DELETE",
+      headers: svcHeaders,
+    });
     return json({ verdict: "deleted", ...verdict });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : "unknown" }, 500);
