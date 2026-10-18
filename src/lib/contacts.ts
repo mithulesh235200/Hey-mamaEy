@@ -293,7 +293,16 @@ export async function sendFriendInvite(opts: {
       space_name: (opts.spaceName || "a private chat").slice(0, 60),
     },
   });
-  if (error) throw new Error(error.message || "Invite failed to send.");
+  if (error) {
+    const msg = error.message || "Invite failed to send.";
+    // FunctionsFetchError = network-level failure (Edge Function not deployed
+    // to Supabase, wrong project URL, or CORS). FunctionsHttpError = the
+    // function ran but returned an error (missing secrets, bad input, etc.).
+    const typedErr = new Error(msg);
+    (typedErr as { kind?: string }).kind =
+      error.name === "FunctionsFetchError" ? "network" : "function";
+    throw typedErr;
+  }
   const sent = Number((data as { sent?: unknown } | null)?.sent ?? 0);
   return { sent: Number.isFinite(sent) ? sent : 0 };
 }

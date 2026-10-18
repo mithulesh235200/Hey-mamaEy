@@ -92,9 +92,11 @@ Deno.serve(async (req: Request) => {
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     const PROJECT_ID = Deno.env.get("FCM_PROJECT_ID") || "";
     const SA_JSON = Deno.env.get("FCM_SERVICE_ACCOUNT") || "";
-    if (!SUPABASE_URL || !SERVICE_KEY || !PROJECT_ID || !SA_JSON) {
-      return json({ error: "Missing secrets" }, 500);
+    if (!SUPABASE_URL || !SERVICE_KEY) {
+      return json({ error: "Missing Supabase credentials" }, 500);
     }
+
+    const hasFcm = Boolean(PROJECT_ID && SA_JSON);
 
     const body = (await req.json()) as Record<string, unknown>;
     const target = cleanId(body.target_user_id);
@@ -122,7 +124,9 @@ Deno.serve(async (req: Request) => {
     );
     if (!tokRes.ok) return json({ error: "Token lookup failed" }, 502);
     const tokens = (await tokRes.json()) as { token: string }[];
-    if (!Array.isArray(tokens) || tokens.length === 0) return json({ sent: 0 });
+    if (!Array.isArray(tokens) || tokens.length === 0 || !hasFcm) {
+      return json({ sent: 0 });
+    }
 
     const sa = JSON.parse(SA_JSON) as { client_email: string; private_key: string };
     const accessToken = await fcmAccessToken(sa.client_email, sa.private_key);

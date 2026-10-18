@@ -67,6 +67,7 @@ export function People({ userId, variant, onDone }: PeopleProps) {
   const handleInvite = async (contact: Contact) => {
     if (busy) return;
     setBusy(`invite:${contact.id}`);
+    let spaceCode: string | undefined;
     try {
       // Ensure a 1:1 space exists (creates + links one on first invite).
       const space = await openDirectChat(contact.id);
@@ -74,6 +75,7 @@ export function People({ userId, variant, onDone }: PeopleProps) {
         toast.error("Couldn't prepare invite", { description: "Check your connection." });
         return;
       }
+      spaceCode = space.code;
       linkContactSpace(contact.id, space.code);
       const { sent } = await sendFriendInvite({
         targetUserId: contact.id,
@@ -90,9 +92,27 @@ export function People({ userId, variant, onDone }: PeopleProps) {
       }
       onDone?.();
     } catch (e) {
-      toast.error("Invite failed", {
-        description: e instanceof Error ? e.message : "Check your connection.",
-      });
+      const message = e instanceof Error ? e.message : "Check your connection.";
+      const kind = (e as { kind?: string })?.kind;
+      if (spaceCode) {
+        // Edge Function unreachable (not deployed / no push configured): still
+        // lets the user chat, and offers a manual space-code fallback.
+        if (kind === "network") {
+          toast.error("Push invite unavailable", {
+            description:
+              "The invite Edge Function isn't deployed yet. You can still chat — share this space code manually: " +
+              spaceCode,
+            duration: 10000,
+          });
+        } else {
+          toast.error("Push invite unavailable", {
+            description: `You can still chat. Share this space code manually: ${spaceCode}`,
+            duration: 8000,
+          });
+        }
+      } else {
+        toast.error("Invite failed", { description: message });
+      }
     } finally {
       setBusy(null);
     }

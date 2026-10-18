@@ -716,8 +716,9 @@
   display: grid;
   min-height: calc(4.125rem + env(safe-area-inset-bottom));
   flex: 0 0 auto;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center;
+  gap: 0.25rem;
   border-top: 1px solid var(--border);
   padding: 0.375rem 0.5rem calc(env(safe-area-inset-bottom) + 0.25rem);
   background: color-mix(in srgb, var(--sidebar) 96%, transparent);
