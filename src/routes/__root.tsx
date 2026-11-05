@@ -140,8 +140,9 @@ function RootComponent() {
     try {
       const isNative =
         typeof window !== "undefined" &&
-        (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })
-          ?.Capacitor?.isNativePlatform?.() === true;
+        (
+          window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }
+        )?.Capacitor?.isNativePlatform?.() === true;
       if (isNative) return;
     } catch {
       /* fall through to web registration */

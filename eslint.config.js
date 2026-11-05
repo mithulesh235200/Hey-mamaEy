@@ -6,7 +6,19 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", ".output", ".vinxi"] },
+  {
+    ignores: [
+      "dist",
+      ".output",
+      ".vinxi",
+      // Build/deploy outputs (nitro + Vercel + Capacitor) — minified bundles,
+      // linting them hangs on multi-MB generated files.
+      ".vercel",
+      "android",
+      "supabase/.temp",
+      "node_modules",
+    ],
+  },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],

@@ -126,8 +126,7 @@ export function validatePermanentAccessKey(input: string): {
 
   return {
     valid: false,
-    error:
-      "Access key must be 20 characters (XXXXX-XXXXX-XXXXX-XXXXX) or a legacy 12-digit key.",
+    error: "Access key must be 20 characters (XXXXX-XXXXX-XXXXX-XXXXX) or a legacy 12-digit key.",
     cleanKey: clean,
   };
 }
@@ -251,11 +250,20 @@ function decodeUtf8(bytes: Uint8Array): string {
 
 async function deriveBackupKey(accessKey: string, salt: Uint8Array): Promise<CryptoKey> {
   const subtle = getSubtle();
-  const base = await subtle.importKey("raw", utf8(accessKey.trim().toUpperCase()), "PBKDF2", false, [
-    "deriveKey",
-  ]);
+  const base = await subtle.importKey(
+    "raw",
+    utf8(accessKey.trim().toUpperCase()),
+    "PBKDF2",
+    false,
+    ["deriveKey"],
+  );
   return subtle.deriveKey(
-    { name: "PBKDF2", salt: salt as unknown as BufferSource, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    {
+      name: "PBKDF2",
+      salt: salt as unknown as BufferSource,
+      iterations: PBKDF2_ITERATIONS,
+      hash: "SHA-256",
+    },
     base,
     { name: "AES-GCM", length: 256 },
     false,
@@ -361,10 +369,7 @@ function parseIdk(raw: unknown): IdentityKeyPayload | undefined {
  * a legacy plaintext token, or a bare access key.
  * Never throws — failures come back as `error`.
  */
-export async function parseBackupInput(
-  input: string,
-  accessKey?: string,
-): Promise<ParsedBackup> {
+export async function parseBackupInput(input: string, accessKey?: string): Promise<ParsedBackup> {
   const clean = (input ?? "").trim();
 
   /* ---- v2: encrypted token, needs the access key supplied separately ---- */
@@ -415,7 +420,8 @@ export async function parseBackupInput(
       return {
         key: "",
         userId: "",
-        error: "Couldn't unlock this backup — check that the access key matches the one used to create it.",
+        error:
+          "Couldn't unlock this backup — check that the access key matches the one used to create it.",
       };
     }
   }
@@ -467,7 +473,8 @@ export async function parseBackupInput(
     return {
       key: "",
       userId: "",
-      error: "Backup token detected — paste it in the second field and your access key in the first.",
+      error:
+        "Backup token detected — paste it in the second field and your access key in the first.",
     };
   }
 

@@ -826,7 +826,8 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
                         className="w-full rounded-xl border border-border bg-background p-3 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                       />
                       <label className="block text-xs font-medium text-foreground">
-                        2 — Encrypted Backup Token <span className="text-muted-foreground">(optional)</span>:
+                        2 — Encrypted Backup Token{" "}
+                        <span className="text-muted-foreground">(optional)</span>:
                       </label>
                       <input
                         type="text"
@@ -883,14 +884,11 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
                         const next = !ephemeral;
                         setEphemeralDevice(next);
                         setEphemeral(next);
-                        toast.success(
-                          next ? "Shared-device mode on" : "Shared-device mode off",
-                          {
-                            description: next
-                              ? "This browser will forget your identity when the tab closes."
-                              : "Your identity stays on this device.",
-                          },
-                        );
+                        toast.success(next ? "Shared-device mode on" : "Shared-device mode off", {
+                          description: next
+                            ? "This browser will forget your identity when the tab closes."
+                            : "Your identity stays on this device.",
+                        });
                       }}
                       className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
                         ephemeral ? "bg-primary" : "bg-muted"
@@ -914,7 +912,8 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
                         forgetIdentity();
                         hydrate();
                         toast.success("This device forgotten", {
-                          description: "A fresh identity was created. Your key still works elsewhere.",
+                          description:
+                            "A fresh identity was created. Your key still works elsewhere.",
                         });
                         onClose();
                       }

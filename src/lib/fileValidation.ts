@@ -13,8 +13,7 @@
 export type AllowedKind = "image" | "video" | "audio" | "file";
 
 export type FileVerdict =
-  | { ok: true; kind: AllowedKind; safeName: string; mime: string }
-  | { ok: false; error: string };
+  { ok: true; kind: AllowedKind; safeName: string; mime: string } | { ok: false; error: string };
 
 const MB = 1024 * 1024;
 
@@ -78,13 +77,58 @@ const EXT_RULES: Record<string, ExtRule> = {
  * `notes.pdf.html` and `song.mp3.js` are all rejected.
  */
 const DENY_EXT = new Set([
-  "html", "htm", "xhtml", "shtml", "svg", "svgz",
-  "js", "mjs", "cjs", "jsx", "tsx", "ts", "jsonp",
-  "exe", "dll", "msi", "bat", "cmd", "com", "scr", "pif",
-  "ps1", "vbs", "vbe", "jse", "wsf", "wsh", "jar", "apk",
-  "aab", "ipa", "iso", "dmg", "img", "swf", "php", "phtml",
-  "phar", "py", "pyc", "rb", "pl", "sh", "bash", "zsh",
-  "lnk", "url", "scf", "hta", "gadget", "msc", "reg",
+  "html",
+  "htm",
+  "xhtml",
+  "shtml",
+  "svg",
+  "svgz",
+  "js",
+  "mjs",
+  "cjs",
+  "jsx",
+  "tsx",
+  "ts",
+  "jsonp",
+  "exe",
+  "dll",
+  "msi",
+  "bat",
+  "cmd",
+  "com",
+  "scr",
+  "pif",
+  "ps1",
+  "vbs",
+  "vbe",
+  "jse",
+  "wsf",
+  "wsh",
+  "jar",
+  "apk",
+  "aab",
+  "ipa",
+  "iso",
+  "dmg",
+  "img",
+  "swf",
+  "php",
+  "phtml",
+  "phar",
+  "py",
+  "pyc",
+  "rb",
+  "pl",
+  "sh",
+  "bash",
+  "zsh",
+  "lnk",
+  "url",
+  "scf",
+  "hta",
+  "gadget",
+  "msc",
+  "reg",
 ]);
 
 export function formatUploadBytes(bytes = 0): string {
@@ -95,7 +139,12 @@ export function formatUploadBytes(bytes = 0): string {
 
 function sanitizeBaseName(name: string): string {
   const base = (name.split(/[\\/]/).pop() || "file").trim() || "file";
-  return base.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^\.+/, "").slice(0, 80) || "file";
+  return (
+    base
+      .replace(/[^a-zA-Z0-9._-]+/g, "_")
+      .replace(/^\.+/, "")
+      .slice(0, 80) || "file"
+  );
 }
 
 function normalizeMime(mime: string): string {
@@ -165,7 +214,10 @@ function magicOk(ext: string, head: Uint8Array, fullTextHead?: string): boolean 
       if (startsWith(head, [0x4d, 0x5a])) return false; // MZ
       if (startsWith(head, [0x7f, 0x45, 0x4c, 0x46])) return false; // ELF
       if (startsWith(head, [0x50, 0x4b, 0x03, 0x04])) return false; // ZIP
-      const text = (fullTextHead ?? "").replace(/^\uFEFF/, "").trimStart().slice(0, 200);
+      const text = (fullTextHead ?? "")
+        .replace(/^\uFEFF/, "")
+        .trimStart()
+        .slice(0, 200);
       if (/^<!doctype\s+html/i.test(text)) return false;
       if (/^<(html|svg|script|iframe|object|embed|link|meta|xml)[\s>]/i.test(text)) return false;
       if (/^<\?xml/i.test(text)) return false;
@@ -259,5 +311,4 @@ export const ACCEPT_IMAGE_VIDEO =
   "image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,.jpg,.jpeg,.png,.gif,.webp,.mp4,.webm";
 export const ACCEPT_AUDIO =
   "audio/mpeg,audio/wav,audio/x-wav,audio/ogg,audio/webm,audio/mp4,audio/x-m4a,.mp3,.wav,.ogg,.oga,.webm,.m4a";
-export const ACCEPT_DOCUMENT =
-  ".pdf,.txt,.md,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip";
+export const ACCEPT_DOCUMENT = ".pdf,.txt,.md,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip";

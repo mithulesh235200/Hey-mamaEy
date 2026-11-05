@@ -68,7 +68,13 @@ export const THEMES: ThemeDef[] = [
 
 export const ACCENTS: { id: Accent; label: string; color: string; hsl: string; fg: string }[] = [
   { id: "cyan", label: "Electric Cyan", color: "#06b6d4", hsl: "hsl(188 94% 43%)", fg: "#ffffff" },
-  { id: "emerald", label: "Neon Emerald", color: "#10b981", hsl: "hsl(160 84% 39%)", fg: "#ffffff" },
+  {
+    id: "emerald",
+    label: "Neon Emerald",
+    color: "#10b981",
+    hsl: "hsl(160 84% 39%)",
+    fg: "#ffffff",
+  },
   { id: "violet", label: "Ultra Violet", color: "#8b5cf6", hsl: "hsl(262 83% 58%)", fg: "#ffffff" },
   { id: "gold", label: "Solar Gold", color: "#f59e0b", hsl: "hsl(38 92% 48%)", fg: "#000000" },
   { id: "rose", label: "Vibrant Rose", color: "#f43f5e", hsl: "hsl(343 89% 60%)", fg: "#ffffff" },
@@ -138,9 +144,7 @@ export function applyAccent(accent: Accent): void {
  */
 export function themeBootScript(): string {
   const themeIds = JSON.stringify(THEMES.map((t) => t.id));
-  const accentMap = JSON.stringify(
-    Object.fromEntries(ACCENTS.map((a) => [a.id, [a.hsl, a.fg]])),
-  );
+  const accentMap = JSON.stringify(Object.fromEntries(ACCENTS.map((a) => [a.id, [a.hsl, a.fg]])));
   return (
     `(function(){try{` +
     `var t=localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)})||"dark";` +
