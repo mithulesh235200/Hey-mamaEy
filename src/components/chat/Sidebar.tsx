@@ -28,26 +28,19 @@ import {
   type Message,
   type Space,
 } from "@/lib/heymama";
+import { isBackupToken, validatePermanentAccessKey } from "@/lib/accessKey";
+import {
+  ACCENTS,
+  PREFERENCES_EVENT,
+  THEMES,
+  applyAccent,
+  applyTheme,
+  loadAccent,
+  loadTheme,
+  type Accent,
+  type Theme,
+} from "@/lib/theme";
 import { People } from "./People";
-
-type Theme = "dark" | "light" | "cyberpunk" | "sunset" | "ocean";
-type Accent = "cyan" | "emerald" | "violet" | "gold" | "rose";
-
-const THEMES: { id: Theme; label: string; icon: string }[] = [
-  { id: "dark", label: "Midnight", icon: "🌙" },
-  { id: "light", label: "Light", icon: "☀️" },
-  { id: "cyberpunk", label: "Cyberpunk", icon: "⚡" },
-  { id: "sunset", label: "Sunset", icon: "🌅" },
-  { id: "ocean", label: "Ocean", icon: "🌊" },
-];
-
-const ACCENTS: { id: Accent; label: string; color: string; hsl: string; fg: string }[] = [
-  { id: "cyan", label: "Cyan", color: "#06b6d4", hsl: "hsl(188 94% 43%)", fg: "#ffffff" },
-  { id: "emerald", label: "Emerald", color: "#10b981", hsl: "hsl(160 84% 39%)", fg: "#ffffff" },
-  { id: "violet", label: "Violet", color: "#8b5cf6", hsl: "hsl(262 83% 58%)", fg: "#ffffff" },
-  { id: "gold", label: "Gold", color: "#f59e0b", hsl: "hsl(38 92% 48%)", fg: "#000000" },
-  { id: "rose", label: "Rose", color: "#f43f5e", hsl: "hsl(343 89% 60%)", fg: "#ffffff" },
-];
 
 const USER_STATUSES = ["🚀 Coding", "🎧 Music", "☕ Break", "💤 Away", "✨ Online"];
 
@@ -75,6 +68,7 @@ export function Sidebar({
   const [newPassword, setNewPassword] = useState("");
   const [newMode, setNewMode] = useState<"quick" | "private">("private");
   const [restoreId, setRestoreId] = useState("");
+  const [restoreToken, setRestoreToken] = useState("");
   const [showRestore, setShowRestore] = useState(false);
   const [userStatus, setUserStatus] = useState<string>(() => {
     if (typeof window === "undefined") return "✨ Online";
@@ -87,49 +81,25 @@ export function Sidebar({
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const [theme, setTheme] = useState<Theme>(() => {
-    if (typeof window !== "undefined") {
-      return (localStorage.getItem("heymamaey.theme") as Theme) || "dark";
-    }
-    return "dark";
-  });
+  const [theme, setTheme] = useState<Theme>(() => loadTheme());
 
-  const [accent, setAccent] = useState<Accent>(() => {
-    if (typeof window === "undefined") return "cyan";
-    try {
-      return (localStorage.getItem("heymamaey.accent") as Accent) || "cyan";
-    } catch {
-      return "cyan";
-    }
-  });
+  const [accent, setAccent] = useState<Accent>(() => loadAccent());
 
   useEffect(() => {
-    if (typeof document !== "undefined") {
-      document.documentElement.setAttribute("data-theme", theme);
-      localStorage.setItem("heymamaey.theme", theme);
-    }
+    applyTheme(theme);
   }, [theme]);
 
   useEffect(() => {
-    if (typeof document !== "undefined") {
-      const selected = ACCENTS.find((a) => a.id === accent);
-      if (selected) {
-        document.documentElement.style.setProperty("--primary", selected.hsl);
-        document.documentElement.style.setProperty("--primary-foreground", selected.fg);
-        localStorage.setItem("heymamaey.accent", accent);
-      }
-    }
+    applyAccent(accent);
   }, [accent]);
 
   useEffect(() => {
     const syncAppearance = () => {
-      const savedTheme = localStorage.getItem("heymamaey.theme") as Theme | null;
-      const savedAccent = localStorage.getItem("heymamaey.accent") as Accent | null;
-      if (savedTheme) setTheme(savedTheme);
-      if (savedAccent) setAccent(savedAccent);
+      setTheme(loadTheme());
+      setAccent(loadAccent());
     };
-    window.addEventListener("heymamaey:preferences-updated", syncAppearance);
-    return () => window.removeEventListener("heymamaey:preferences-updated", syncAppearance);
+    window.addEventListener(PREFERENCES_EVENT, syncAppearance);
+    return () => window.removeEventListener(PREFERENCES_EVENT, syncAppearance);
   }, []);
 
   const selectStatus = (st: string) => {
@@ -331,10 +301,10 @@ export function Sidebar({
                     ? "bg-primary text-primary-foreground font-semibold shadow-sm scale-102"
                     : "text-muted-foreground hover:text-foreground hover:bg-secondary/50")
                 }
-                title={t.label}
+                title={t.shortLabel}
               >
-                <span>{t.icon}</span>
-                <span className="hidden sm:inline text-[10px]">{t.label}</span>
+                <span>{t.emoji}</span>
+                <span className="hidden sm:inline text-[10px]">{t.shortLabel}</span>
               </button>
             ))}
           </div>
@@ -416,44 +386,59 @@ export function Sidebar({
             Restore an existing ID
           </button>
           {showRestore && (
-            <div className="mt-2 flex gap-2">
+            <div className="mt-2 space-y-1.5">
               <input
                 value={restoreId}
                 onChange={(e) => setRestoreId(e.target.value)}
-                placeholder="MAMA-0000-EYXX or XXXX-XXXX-XXXX"
-                className="min-w-0 flex-1 rounded-lg bg-background px-2 py-1.5 font-mono text-xs outline-none ring-1 ring-input focus:ring-primary"
+                placeholder="Access key or ID (XXXXX-… / MAMA-…)"
+                aria-label="Permanent access key or identity code"
+                autoComplete="off"
+                spellCheck={false}
+                className="w-full rounded-lg bg-background px-2 py-1.5 font-mono text-xs outline-none ring-1 ring-input focus:ring-primary"
               />
-              <button
-                type="button"
-                onClick={() => {
-                  const value = restoreId.trim();
-                  if (!value) return;
-                  void (async () => {
-                    // Permanent keys & backup tokens restore identity + spaces;
-                    // legacy MAMA- IDs just switch the local identity.
-                    if (
-                      value.startsWith("HEYMAMA_KEY_") ||
-                      value.startsWith("HEYMAMA_BACKUP_") ||
-                      /^\d{4}-\d{4}-\d{4}$/.test(value)
-                    ) {
-                      const result = await restoreFromPermanentKey(value);
-                      toast[result.success ? "success" : "error"](
-                        result.success ? "Identity restored" : "Restore failed",
-                        { description: result.message },
-                      );
-                      if (!result.success) return;
-                    } else {
-                      signInWithId(value);
-                      toast.success("Identity restored");
-                    }
-                    setRestoreId("");
-                    setShowRestore(false);
-                  })();
-                }}
-                className="rounded-lg bg-accent px-2.5 text-xs font-semibold text-accent-foreground"
-              >
-                Use
-              </button>
+              <div className="flex gap-2">
+                <input
+                  value={restoreToken}
+                  onChange={(e) => setRestoreToken(e.target.value)}
+                  placeholder="Backup token (optional)"
+                  aria-label="Backup token"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="min-w-0 flex-1 rounded-lg bg-background px-2 py-1.5 font-mono text-xs outline-none ring-1 ring-input focus:ring-primary"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const value = restoreId.trim();
+                    const tokenValue = restoreToken.trim();
+                    if (!value && !tokenValue) return;
+                    void (async () => {
+                      // Backup tokens & valid access keys restore identity + spaces;
+                      // legacy MAMA- IDs just switch the local identity. Encrypted
+                      // (HEYMAMA_KEY2_) tokens need the access key in the first field.
+                      const tokenPasted = isBackupToken(value) || isBackupToken(tokenValue);
+                      const keyPasted = validatePermanentAccessKey(value).valid;
+                      if (tokenPasted || keyPasted) {
+                        const result = await restoreFromPermanentKey(value, tokenValue);
+                        toast[result.success ? "success" : "error"](
+                          result.success ? "Identity restored" : "Restore failed",
+                          { description: result.message },
+                        );
+                        if (!result.success) return;
+                      } else {
+                        signInWithId(value);
+                        toast.success("Identity restored");
+                      }
+                      setRestoreId("");
+                      setRestoreToken("");
+                      setShowRestore(false);
+                    })();
+                  }}
+                  className="rounded-lg bg-accent px-2.5 text-xs font-semibold text-accent-foreground"
+                >
+                  Use
+                </button>
+              </div>
             </div>
           )}
         </div>

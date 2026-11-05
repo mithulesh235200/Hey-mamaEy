@@ -5,6 +5,8 @@
 //
 // Deploy:  supabase functions deploy push-on-message
 // Webhook: Dashboard > Database > Webhooks > Create trigger on messages/insert.
+// Auth:    set WEBHOOK_SECRET (supabase secrets set) and add it to the webhook
+//   as an x-webhook-secret header; requests without it are rejected (401).
 
 function b64urlBytes(bytes: Uint8Array): string {
   let bin = "";
@@ -92,6 +94,22 @@ function snippetFor(msg: NewMessage): string {
 
 Deno.serve(async (req: Request) => {
   try {
+    // S4: fail closed before any service-role call or FCM send unless the
+    // webhook authenticates. Empty/undefined WEBHOOK_SECRET is rejected too.
+    const webhookSecret = Deno.env.get("WEBHOOK_SECRET") || "";
+    const providedSecret = req.headers.get("x-webhook-secret") || "";
+    if (!webhookSecret || providedSecret !== webhookSecret) {
+      if (!webhookSecret) {
+        console.error(
+          "Set WEBHOOK_SECRET and configure the dashboard webhook to send it in x-webhook-secret",
+        );
+      }
+      return new Response(
+        JSON.stringify({ error: "Unauthorized: missing or invalid x-webhook-secret" }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     const PROJECT_ID = Deno.env.get("FCM_PROJECT_ID") || "";

@@ -1,5 +1,5 @@
 import { Hash, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { forwardMessage, type Message, type Space } from "@/lib/heymama";
 
@@ -13,8 +13,19 @@ export function ForwardDialog({
   onClose: () => void;
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  // Escape closes the dialog — the only modal in the app that lacked it.
+  useEffect(() => {
+    if (!message) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [message, onClose]);
+
   if (!message) return null;
-  const forwardable = message.locked || message.text?.startsWith("__enc1__.") ? false : true;
+  const forwardable = !(message.locked || message.text?.startsWith("__enc1__."));
 
   return (
     <div

@@ -250,14 +250,17 @@ export function MessageBubble({
     minute: "2-digit",
   });
   const poll = message.kind === "text" && message.text ? readPoll(message.text) : null;
-  const pollVotes = allMessages.filter((candidate) =>
-    candidate.text?.startsWith(`${POLL_VOTE_PREFIX}${message.id}:`),
-  );
+  // Vote tallying scans allMessages — only do it for actual polls, otherwise
+  // every bubble pays an O(n) scan per render (O(n²) across the list).
   const latestVotes = new Map<string, number>();
-  for (const vote of pollVotes) {
-    const option = Number(vote.text?.slice(`${POLL_VOTE_PREFIX}${message.id}:`.length));
-    if (Number.isInteger(option) && option >= 0 && option < (poll?.options.length ?? 0)) {
-      latestVotes.set(vote.authorId, option);
+  if (poll) {
+    const votePrefix = `${POLL_VOTE_PREFIX}${message.id}:`;
+    for (const vote of allMessages) {
+      if (!vote.text?.startsWith(votePrefix)) continue;
+      const option = Number(vote.text.slice(votePrefix.length));
+      if (Number.isInteger(option) && option >= 0 && option < poll.options.length) {
+        latestVotes.set(vote.authorId, option);
+      }
     }
   }
   const voteCounts =

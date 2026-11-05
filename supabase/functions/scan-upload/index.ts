@@ -3,6 +3,8 @@
 // Trigger: Storage webhook on storage.objects INSERT (bucket: space-media)
 //   -> POST this function with the object record.
 // Env secrets (supabase secrets set): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+//   WEBHOOK_SECRET (required — the dashboard webhook must send it as the
+//   x-webhook-secret header; the function fails closed with 401 otherwise),
 //   and optionally VT_API_KEY (VirusTotal) for known-malware hash lookups.
 //
 // What it does:
@@ -21,6 +23,7 @@
 // Deploy:  supabase functions deploy scan-upload
 // Webhook: Dashboard > Storage > Webhooks (or Database > Webhooks on
 //   storage.objects) > INSERT, bucket filter = space-media, POST here.
+//   Add header: x-webhook-secret = $WEBHOOK_SECRET (required, else 401).
 
 const EXT_MIME: Record<string, string[]> = {
   jpg: ["image/jpeg"],
@@ -210,6 +213,19 @@ Deno.serve(async (req: Request) => {
     });
 
   try {
+    // S4: fail closed before any service-role fetch/delete unless the webhook
+    // authenticates. Empty/undefined WEBHOOK_SECRET is rejected too.
+    const webhookSecret = Deno.env.get("WEBHOOK_SECRET") || "";
+    const providedSecret = req.headers.get("x-webhook-secret") || "";
+    if (!webhookSecret || providedSecret !== webhookSecret) {
+      if (!webhookSecret) {
+        console.error(
+          "Set WEBHOOK_SECRET and configure the dashboard webhook to send it in x-webhook-secret",
+        );
+      }
+      return json({ error: "Unauthorized: missing or invalid x-webhook-secret" }, 401);
+    }
+
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     const VT_API_KEY = Deno.env.get("VT_API_KEY") || "";

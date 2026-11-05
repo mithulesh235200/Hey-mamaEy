@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ClipboardEvent } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 import { Capacitor } from "@capacitor/core";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -64,6 +64,13 @@ import {
   markSpaceAsRead,
   isOffline,
   useOnline,
+  getSpaceBans,
+  unlockSpaceMessages,
+  setSpacePassword,
+  setSpaceLock,
+  setSpaceReadonly,
+  kickSpaceUser,
+  unbanSpaceUser,
   THREAD_MARKER,
   type MediaKind,
   type Message,
@@ -263,6 +270,13 @@ export function ChatPanel({
   const [deleteSpaceMode, setDeleteSpaceMode] = useState<"me" | "everyone">("me");
   const [deletingSpace, setDeletingSpace] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
+  const copiedTimerRef = useRef<number | null>(null);
+  // Clear the pending "Copied!" reset if the panel unmounts mid-timer.
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
+    };
+  }, []);
   const [callMode, setCallMode] = useState<"voice" | "video" | null>(null);
   const [activeMembers, setActiveMembers] = useState<Array<{ userId: string; name: string }>>([]);
   // Typing state keyed by userId (names can collide, e.g. two "Anonymous").
@@ -287,6 +301,14 @@ export function ChatPanel({
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingExpiryRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const presenceChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  // True while the presence channel is subscribed — guards re-track calls.
+  const presenceSubscribedRef = useRef(false);
+  // Latest display name for the subscribe-time track() (avoids re-joining the
+  // channel every time the name changes).
+  const presenceNameRef = useRef(displayName);
+  presenceNameRef.current = displayName;
+  // Throttle for typing-start broadcasts (one per second max).
+  const typingStartSentRef = useRef(0);
   const knownMessageIdsRef = useRef(new Set(messages.map((message) => message.id)));
   const notificationSpaceIdRef = useRef(space?.id);
 
@@ -359,7 +381,7 @@ export function ChatPanel({
       (message) =>
         !knownMessageIdsRef.current.has(message.id) &&
         message.authorId !== userId &&
-        !message.text?.startsWith("__poll_vote__:"),
+        !message.text?.startsWith(POLL_VOTE_PREFIX),
     );
     messages.forEach((message) => knownMessageIdsRef.current.add(message.id));
     if (knownMessageIdsRef.current.size > 1000) {
@@ -585,9 +607,14 @@ export function ChatPanel({
     );
   };
 
+  // The channel only depends on the SPACE CODE (its name) and the local user
+  // id — the full `space` object is deliberately not a dependency so lock /
+  // readonly / password updates no longer tear the channel down and rejoin.
+  const spaceCode = space?.code;
   useEffect(() => {
-    if (!space) return;
-    const channel = supabase.channel(`presence:${space.code}`, {
+    if (!spaceCode) return;
+    presenceSubscribedRef.current = false;
+    const channel = supabase.channel(`presence:${spaceCode}`, {
       config: { broadcast: { self: false } },
     });
     presenceChannelRef.current = channel;
@@ -649,13 +676,15 @@ export function ChatPanel({
       )
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
-          await channel.track({ userId, name: displayName.trim() || "Anonymous" });
+          presenceSubscribedRef.current = true;
+          await channel.track({ userId, name: presenceNameRef.current.trim() || "Anonymous" });
           updateMembers();
         }
       });
 
     const typingTimers = typingExpiryRef.current;
     return () => {
+      presenceSubscribedRef.current = false;
       void channel.untrack();
       void channel.unsubscribe();
       typingTimers.forEach(clearTimeout);
@@ -664,7 +693,18 @@ export function ChatPanel({
       setActiveMembers([]);
       setTypingUsers(new Map());
     };
-  }, [displayName, space, userId]);
+  }, [spaceCode, userId]);
+
+  // Announce display-name changes by re-tracking on the EXISTING channel —
+  // typing a name in the profile box no longer unsubscribes/resubscribes
+  // (which used to clear the member list and typing indicators per keystroke).
+  useEffect(() => {
+    if (!presenceSubscribedRef.current) return;
+    void presenceChannelRef.current?.track({
+      userId,
+      name: displayName.trim() || "Anonymous",
+    });
+  }, [displayName, userId]);
 
   // Reload per-space disappearing timer when switching spaces (useState
   // initializer only runs once, so it went stale before).
@@ -760,11 +800,18 @@ export function ChatPanel({
     }
 
     if (val.trim().length > 0) {
-      void presenceChannelRef.current.send({
-        type: "broadcast",
-        event: "typing-start",
-        payload: { name, userId },
-      });
+      // Throttle: recipients already show "typing" for 4s after each event,
+      // so rebroadcasting typing-start at most once per second keeps the
+      // indicator fresh without sending one Realtime message per keystroke.
+      const now = Date.now();
+      if (now - typingStartSentRef.current >= 1000) {
+        typingStartSentRef.current = now;
+        void presenceChannelRef.current.send({
+          type: "broadcast",
+          event: "typing-start",
+          payload: { name, userId },
+        });
+      }
 
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
       typingTimerRef.current = setTimeout(() => {
@@ -839,7 +886,8 @@ export function ChatPanel({
       await navigator.clipboard.writeText(valueToCopy);
       setCopiedInvite(true);
       toast.success(inviteUrl ? "Invite link copied!" : "Space code copied!");
-      setTimeout(() => setCopiedInvite(false), 2000);
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = window.setTimeout(() => setCopiedInvite(false), 2000);
     } catch {
       toast.error("Couldn't copy invite link");
     }
@@ -898,6 +946,42 @@ export function ChatPanel({
     el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
   }, [text, space?.id]);
 
+  // Derived message lists — memoized so composer keystrokes (setText →
+  // re-render) don't refilter the whole array on every character. Declared
+  // before the early return below so the hook order stays unconditional.
+  const filteredMessages = useMemo(
+    () =>
+      messages.filter((m) => {
+        if (m.text?.startsWith(POLL_VOTE_PREFIX)) return false;
+        if (!searchQuery.trim()) return true;
+        const q = searchQuery.toLowerCase();
+        return (
+          m.text?.toLowerCase().includes(q) ||
+          m.authorName?.toLowerCase().includes(q) ||
+          m.fileName?.toLowerCase().includes(q)
+        );
+      }),
+    [messages, searchQuery],
+  );
+
+  const mediaMessages = useMemo(
+    () => messages.filter((m) => m.dataUrl && m.kind !== "text"),
+    [messages],
+  );
+
+  const filteredGallery = useMemo(
+    () =>
+      activeMediaTab === "all"
+        ? mediaMessages
+        : mediaMessages.filter((m) => m.kind === activeMediaTab),
+    [mediaMessages, activeMediaTab],
+  );
+
+  const starredMessagesList = useMemo(
+    () => messages.filter((m) => starredIds.has(m.id)),
+    [messages, starredIds],
+  );
+
   if (!space) {
     return (
       <section className="chat-canvas flex h-full flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
@@ -924,25 +1008,6 @@ export function ChatPanel({
       </section>
     );
   }
-
-  const filteredMessages = messages.filter((m) => {
-    if (m.text?.startsWith(POLL_VOTE_PREFIX)) return false;
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      m.text?.toLowerCase().includes(q) ||
-      m.authorName?.toLowerCase().includes(q) ||
-      m.fileName?.toLowerCase().includes(q)
-    );
-  });
-
-  const mediaMessages = messages.filter((m) => m.dataUrl && m.kind !== "text");
-  const filteredGallery = mediaMessages.filter((m) => {
-    if (activeMediaTab === "all") return true;
-    return m.kind === activeMediaTab;
-  });
-
-  const starredMessagesList = messages.filter((m) => starredIds.has(m.id));
 
   const handlePollVote = (poll: Message, option: number) => {
     const voteText = `${POLL_VOTE_PREFIX}${poll.id}:${option}`;
@@ -1011,7 +1076,6 @@ export function ChatPanel({
   const loadBans = async () => {
     setBansLoading(true);
     try {
-      const { getSpaceBans } = await import("@/lib/heymama");
       setBans(await getSpaceBans(space.id));
     } finally {
       setBansLoading(false);
@@ -1811,7 +1875,6 @@ export function ChatPanel({
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   void (async () => {
-                    const { unlockSpaceMessages } = await import("@/lib/heymama");
                     await unlockSpaceMessages(space.code, roomPasswordInput);
                     setRoomPasswordInput("");
                     toast.success("Room password applied — messages re-decrypted");
@@ -1826,7 +1889,6 @@ export function ChatPanel({
               type="button"
               onClick={() => {
                 void (async () => {
-                  const { unlockSpaceMessages } = await import("@/lib/heymama");
                   await unlockSpaceMessages(space.code, roomPasswordInput);
                   setRoomPasswordInput("");
                   toast.success("Room password applied — messages re-decrypted");
@@ -1871,7 +1933,6 @@ export function ChatPanel({
                       });
                       return;
                     }
-                    const { setSpacePassword } = await import("@/lib/heymama");
                     const ok = await setSpacePassword(space.id, roomPasswordSettingInput);
                     if (ok) {
                       toast.success(
@@ -1905,7 +1966,6 @@ export function ChatPanel({
                     )
                       return;
                     void (async () => {
-                      const { setSpacePassword } = await import("@/lib/heymama");
                       const ok = await setSpacePassword(space.id, "");
                       toast[ok ? "success" : "error"](
                         ok
@@ -1960,7 +2020,6 @@ export function ChatPanel({
                   type="button"
                   onClick={() => {
                     void (async () => {
-                      const { setSpaceLock } = await import("@/lib/heymama");
                       const next = !space.isLocked;
                       const ok = await setSpaceLock(space.id, next);
                       toast[ok ? "success" : "error"](
@@ -1980,7 +2039,6 @@ export function ChatPanel({
                   type="button"
                   onClick={() => {
                     void (async () => {
-                      const { setSpaceReadonly } = await import("@/lib/heymama");
                       const next = !space.isReadonly;
                       const ok = await setSpaceReadonly(space.id, next);
                       toast[ok ? "success" : "error"](
@@ -2021,7 +2079,6 @@ export function ChatPanel({
                     )
                       return;
                     void (async () => {
-                      const { kickSpaceUser } = await import("@/lib/heymama");
                       const ok = await kickSpaceUser(space.id, target);
                       toast[ok ? "success" : "error"](
                         ok ? `${target.toUpperCase()} removed` : "Couldn't remove that user",
@@ -2057,7 +2114,6 @@ export function ChatPanel({
                           type="button"
                           onClick={() => {
                             void (async () => {
-                              const { unbanSpaceUser } = await import("@/lib/heymama");
                               const ok = await unbanSpaceUser(space.id, b.userId);
                               toast[ok ? "success" : "error"](
                                 ok ? `${b.userId} can rejoin` : "Couldn't unban",

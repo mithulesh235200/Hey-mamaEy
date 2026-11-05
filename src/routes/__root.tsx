@@ -7,9 +7,10 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { Toaster } from "@/components/ui/sonner";
+import { PREFERENCES_EVENT, loadTheme, themeBootScript } from "@/lib/theme";
 import appCss from "../styles.css?url";
 
 function NotFoundComponent() {
@@ -106,6 +107,9 @@ function RootShell({ children }: { children: ReactNode }) {
     <html lang="en" className="dark">
       <head>
         <HeadContent />
+        {/* Applies the saved theme/accent before first paint so non-dark
+            themes never flash the default dark background on load. */}
+        <script dangerouslySetInnerHTML={{ __html: themeBootScript() }} />
       </head>
       <body>
         {children}
@@ -117,6 +121,17 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+
+  // Toaster must follow the active theme (was hard-coded to "dark").
+  const [toastTheme, setToastTheme] = useState<"light" | "dark">(() =>
+    typeof window === "undefined" ? "dark" : loadTheme() === "light" ? "light" : "dark",
+  );
+
+  useEffect(() => {
+    const syncToastTheme = () => setToastTheme(loadTheme() === "light" ? "light" : "dark");
+    window.addEventListener(PREFERENCES_EVENT, syncToastTheme);
+    return () => window.removeEventListener(PREFERENCES_EVENT, syncToastTheme);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
@@ -160,7 +175,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <Outlet />
-      <Toaster theme="dark" />
+      <Toaster theme={toastTheme} />
     </QueryClientProvider>
   );
 }

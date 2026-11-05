@@ -36,9 +36,18 @@ import {
   isEphemeralDevice,
   setEphemeralDevice,
 } from "@/lib/heymama";
+import {
+  ACCENTS,
+  THEMES,
+  applyAccent,
+  applyTheme,
+  loadAccent,
+  loadTheme,
+  type Accent,
+  type Theme,
+} from "@/lib/theme";
 
-export type Theme = "dark" | "light" | "cyberpunk" | "sunset" | "ocean";
-export type Accent = "cyan" | "emerald" | "violet" | "gold" | "rose";
+export type { Accent, Theme };
 export type Density = "comfortable" | "compact";
 
 interface SettingsModalProps {
@@ -48,63 +57,15 @@ interface SettingsModalProps {
   displayName: string;
 }
 
-const THEMES: {
-  id: Theme;
-  label: string;
-  desc: string;
-  icon: React.ReactNode;
-  previewBg: string;
-}[] = [
-  {
-    id: "dark",
-    label: "Midnight Dark",
-    desc: "Sleek deep dark mode for night focus",
-    icon: <Moon className="size-4 text-cyan-400" />,
-    previewBg: "bg-slate-900 border-slate-700",
-  },
-  {
-    id: "ocean",
-    label: "Deep Ocean",
-    desc: "Vibrant aquatic blue & teal glow",
-    icon: <Waves className="size-4 text-sky-400" />,
-    previewBg: "bg-sky-950 border-sky-800",
-  },
-  {
-    id: "cyberpunk",
-    label: "Cyberpunk Neon",
-    desc: "High-contrast neon pink & purple vibe",
-    icon: <Zap className="size-4 text-pink-400" />,
-    previewBg: "bg-purple-950 border-pink-700",
-  },
-  {
-    id: "sunset",
-    label: "Sunset Gold",
-    desc: "Warm amber & golden glow theme",
-    icon: <Flame className="size-4 text-amber-400" />,
-    previewBg: "bg-amber-950 border-amber-800",
-  },
-  {
-    id: "light",
-    label: "Pure Light",
-    desc: "Clean high-contrast daylight view",
-    icon: <Sun className="size-4 text-amber-500" />,
-    previewBg: "bg-slate-100 border-slate-300 text-slate-900",
-  },
-];
-
-const ACCENTS: { id: Accent; label: string; color: string; hsl: string; fg: string }[] = [
-  { id: "cyan", label: "Electric Cyan", color: "#06b6d4", hsl: "hsl(188 94% 43%)", fg: "#ffffff" },
-  {
-    id: "emerald",
-    label: "Neon Emerald",
-    color: "#10b981",
-    hsl: "hsl(160 84% 39%)",
-    fg: "#ffffff",
-  },
-  { id: "violet", label: "Ultra Violet", color: "#8b5cf6", hsl: "hsl(262 83% 58%)", fg: "#ffffff" },
-  { id: "gold", label: "Solar Gold", color: "#f59e0b", hsl: "hsl(38 92% 48%)", fg: "#000000" },
-  { id: "rose", label: "Vibrant Rose", color: "#f43f5e", hsl: "hsl(343 89% 60%)", fg: "#ffffff" },
-];
+// Theme ids/labels/previews live in @/lib/theme (shared with Sidebar); only
+// the card icons are presentation and stay here.
+const THEME_ICONS: Record<Theme, React.ReactNode> = {
+  dark: <Moon className="size-4 text-cyan-400" />,
+  light: <Sun className="size-4 text-amber-500" />,
+  cyberpunk: <Zap className="size-4 text-pink-400" />,
+  sunset: <Flame className="size-4 text-amber-400" />,
+  ocean: <Waves className="size-4 text-sky-400" />,
+};
 
 function savePreference(key: string, value: string) {
   localStorage.setItem(key, value);
@@ -120,6 +81,7 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
   // Permanent Secret Access Key State
   const [showPermanentKey, setShowPermanentKey] = useState(false);
   const [restoreInput, setRestoreInput] = useState("");
+  const [restoreToken, setRestoreToken] = useState("");
   const [showRestoreForm, setShowRestoreForm] = useState(false);
   const [ephemeral, setEphemeral] = useState<boolean>(() => isEphemeralDevice());
 
@@ -138,33 +100,38 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
 
   const handleCopyBackup = async () => {
     try {
-      const payload = getBackupPayload();
+      const payload = await getBackupPayload();
       await navigator.clipboard.writeText(payload);
-      toast.success("Full Backup Data Payload Copied!", {
-        description: "Contains access key, display name, and joined space codes.",
+      toast.success("Encrypted Backup Copied!", {
+        description: "Keep it with your access key — the backup only unlocks with your key.",
       });
-    } catch {
-      toast.error("Copy failed");
+    } catch (err) {
+      toast.error("Backup failed", {
+        description: err instanceof Error ? err.message : "Copy failed",
+      });
     }
   };
 
   const [isRestoring, setIsRestoring] = useState(false);
 
   const handleRestoreAccount = async () => {
-    if (!restoreInput.trim()) {
-      toast.error("Please enter a valid permanent access key or backup token");
+    const key = restoreInput.trim();
+    const token = restoreToken.trim();
+    if (!key && !token) {
+      toast.error("Please enter your permanent access key and/or backup token");
       return;
     }
     setIsRestoring(true);
     const toastId = toast.loading("Syncing identity, spaces & chat history...");
     try {
-      const result = await restoreFromPermanentKey(restoreInput.trim());
+      const result = await restoreFromPermanentKey(key, token);
       toast.dismiss(toastId);
       if (result.success) {
         toast.success("Access Granted & Data Synced!", {
           description: result.message,
         });
         setRestoreInput("");
+        setRestoreToken("");
         setShowRestoreForm(false);
         onClose();
       } else {
@@ -181,19 +148,9 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
   };
 
   // Theme & Accent State
-  const [theme, setTheme] = useState<Theme>(() => {
-    if (typeof window !== "undefined") {
-      return (localStorage.getItem("heymamaey.theme") as Theme) || "dark";
-    }
-    return "dark";
-  });
+  const [theme, setTheme] = useState<Theme>(() => loadTheme());
 
-  const [accent, setAccent] = useState<Accent>(() => {
-    if (typeof window !== "undefined") {
-      return (localStorage.getItem("heymamaey.accent") as Accent) || "cyan";
-    }
-    return "cyan";
-  });
+  const [accent, setAccent] = useState<Accent>(() => loadAccent());
 
   // Interactive Preference Toggles
   const [density, setDensity] = useState<Density>(() => {
@@ -231,23 +188,11 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
   }, [onClose, open]);
 
   useEffect(() => {
-    if (typeof document !== "undefined") {
-      document.documentElement.setAttribute("data-theme", theme);
-      localStorage.setItem("heymamaey.theme", theme);
-      window.dispatchEvent(new Event("heymamaey:preferences-updated"));
-    }
+    applyTheme(theme); // applies, persists, and dispatches the update event
   }, [theme]);
 
   useEffect(() => {
-    if (typeof document !== "undefined") {
-      const selected = ACCENTS.find((a) => a.id === accent);
-      if (selected) {
-        document.documentElement.style.setProperty("--primary", selected.hsl);
-        document.documentElement.style.setProperty("--primary-foreground", selected.fg);
-        localStorage.setItem("heymamaey.accent", accent);
-        window.dispatchEvent(new Event("heymamaey:preferences-updated"));
-      }
-    }
+    applyAccent(accent); // applies, persists, and dispatches the update event
   }, [accent]);
 
   useEffect(() => {
@@ -470,7 +415,7 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
                             <div
                               className={`flex size-9 items-center justify-center rounded-lg border ${t.previewBg}`}
                             >
-                              {t.icon}
+                              {THEME_ICONS[t.id]}
                             </div>
                             <div>
                               <p className="text-xs font-bold text-foreground">{t.label}</p>
@@ -869,15 +814,34 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
                   {showRestoreForm && (
                     <div className="mt-3.5 space-y-3 rounded-2xl border border-primary/30 bg-primary/5 p-4">
                       <label className="block text-xs font-medium text-foreground">
-                        Enter Permanent Access Number (e.g. 8492-3841-9021):
+                        1 — Permanent Access Key (e.g. A1B2C-D3E4F-5G6H7-J8K9M):
                       </label>
                       <input
                         type="text"
                         value={restoreInput}
                         onChange={(e) => setRestoreInput(e.target.value)}
-                        placeholder="e.g. 8492-3841-9021 or HEYMAMA_KEY_..."
+                        placeholder="XXXXX-XXXXX-XXXXX-XXXXX (or legacy 8492-3841-9021)"
+                        autoComplete="off"
+                        spellCheck={false}
                         className="w-full rounded-xl border border-border bg-background p-3 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                       />
+                      <label className="block text-xs font-medium text-foreground">
+                        2 — Encrypted Backup Token <span className="text-muted-foreground">(optional)</span>:
+                      </label>
+                      <input
+                        type="text"
+                        value={restoreToken}
+                        onChange={(e) => setRestoreToken(e.target.value)}
+                        placeholder="HEYMAMA_KEY2_… (or legacy HEYMAMA_KEY_…)"
+                        autoComplete="off"
+                        spellCheck={false}
+                        className="w-full rounded-xl border border-border bg-background p-3 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                      <p className="text-[10px] leading-relaxed text-muted-foreground">
+                        Encrypted backups (HEYMAMA_KEY2_) only open with the matching access key —
+                        paste the key above and the token here. A legacy HEYMAMA_KEY_ token is
+                        self-contained and can go in either field.
+                      </p>
                       <button
                         onClick={handleRestoreAccount}
                         disabled={isRestoring}

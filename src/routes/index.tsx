@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Menu } from "lucide-react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
@@ -51,9 +51,8 @@ export const Route = createFileRoute("/")({
 
 function Index() {
   const state = useChatState();
-  if (typeof window !== "undefined" && !state.ready) {
-    hydrate();
-  }
+  // NOTE: hydrate() is intentionally NOT called during render — it schedules
+  // timers and writes localStorage. The mount effect below is its only caller.
   const [forwarding, setForwarding] = useState<Message | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileTab, setMobileTab] = useState<MobileTab>("spaces");
@@ -65,19 +64,30 @@ function Index() {
     mobileTab: "spaces" as MobileTab,
     settingsOpen: false,
   });
-  const activeSpace = state.spaces.find((s) => s.id === state.activeSpaceId) ?? null;
+  const activeSpace = useMemo(
+    () => state.spaces.find((s) => s.id === state.activeSpaceId) ?? null,
+    [state.spaces, state.activeSpaceId],
+  );
   // Messages the user deleted for themselves never render anywhere.
-  const visibleMessages = withoutHidden(state.messages, state.hiddenMessageIds);
-  const activeMessages = activeSpace
-    ? visibleMessages.filter((m) => m.spaceId === activeSpace.id)
-    : [];
+  const visibleMessages = useMemo(
+    () => withoutHidden(state.messages, state.hiddenMessageIds),
+    [state.messages, state.hiddenMessageIds],
+  );
+  const activeMessages = useMemo(() => {
+    if (!activeSpace) return [];
+    return visibleMessages.filter((m) => m.spaceId === activeSpace.id);
+  }, [visibleMessages, activeSpace]);
 
-  backState.current = {
-    activeSpace: Boolean(activeSpace),
-    mobileOpen,
-    mobileTab,
-    settingsOpen,
-  };
+  // Keep the back-button shim's snapshot fresh after every commit instead of
+  // mutating the ref during render (a render-phase side effect).
+  useEffect(() => {
+    backState.current = {
+      activeSpace: Boolean(activeSpace),
+      mobileOpen,
+      mobileTab,
+      settingsOpen,
+    };
+  });
 
   useEffect(() => {
     hydrate();
@@ -201,7 +211,15 @@ function Index() {
     };
 
     window.addEventListener("popstate", handleBrowserBack);
-    return () => window.removeEventListener("popstate", handleBrowserBack);
+    return () => {
+      window.removeEventListener("popstate", handleBrowserBack);
+      // Drop the shim entry we pushed so repeated mounts don't stack
+      // duplicates. Only when it is still the current entry — navigating
+      // away via the router replaces history state, keeping this a no-op.
+      if (window.history.state?.heyMamaEyBackEntry) {
+        window.history.go(-1);
+      }
+    };
   }, []);
 
   if (!state.ready) {

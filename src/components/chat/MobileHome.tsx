@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Check,
@@ -57,6 +57,11 @@ export function MobileHome({
   onClose,
 }: MobileHomeProps) {
   const [editingName, setEditingName] = useState(displayName === "You" ? "" : displayName);
+  // Keep the profile editor in sync when the name changes elsewhere (Settings,
+  // restore) — previously the field stayed stale until the tab remounted.
+  useEffect(() => {
+    setEditingName(displayName === "You" ? "" : displayName);
+  }, [displayName]);
   const [spaceName, setSpaceName] = useState("");
   const [spacePassword, setSpacePassword] = useState("");
   const [spaceMode, setSpaceMode] = useState<"quick" | "private">("private");

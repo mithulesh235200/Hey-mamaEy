@@ -249,15 +249,29 @@ export async function flushOutbox(): Promise<void> {
   persistOfflineSnapshot();
 }
 
-const rand = (n: number) =>
-  Array.from({ length: n }, () => Math.floor(Math.random() * 10)).join("");
+/** Cryptographically-strong picker for identity fallbacks (never Math.random-first). */
+function securePick(alphabet: string, n: number): string {
+  try {
+    const buf = new Uint32Array(n);
+    crypto.getRandomValues(buf);
+    let out = "";
+    for (let i = 0; i < n; i++) out += alphabet[(buf[i] ?? 0) % alphabet.length];
+    return out;
+  } catch {
+    return Array.from(
+      { length: n },
+      () => alphabet[Math.floor(Math.random() * alphabet.length)],
+    ).join("");
+  }
+}
 
-const alnum = (n: number) => {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  return Array.from({ length: n }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-};
+const rand = (n: number) => securePick("0123456789", n);
 
-export const generateUserId = () => `MAMA-${rand(4)}-EY${alnum(2)}`;
+const alnum = (n: number) => securePick("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", n);
+
+// Wider 6+4 shape matches v2 key-derived IDs (~2^39.6 space) so fallback
+// identities almost never collide with another user.
+export const generateUserId = () => `MAMA-${rand(6)}-EY${alnum(4)}`;
 
 // Long alphanumeric room tokens (XXXX-XXXX-XXXX). Legacy numeric codes stay joinable.
 export { generateSecureSpaceCode as generateSpaceCode } from "./spaceCode";
@@ -309,11 +323,22 @@ import {
   createFullBackupPayload,
   parseBackupInput,
   validatePermanentAccessKey,
+  isBackupToken,
 } from "./accessKey";
 // Static import is cycle-safe: contacts.ts only imports this module dynamically.
-import { exportContacts, mergeContacts } from "./contacts";
+import { exportContacts, mergeContacts, pinContactKey, clearContacts } from "./contacts";
 // Static import is cycle-safe: identity.ts never imports this module.
-import { exportIdentityJwk } from "./identity";
+import {
+  exportIdentityJwk,
+  fetchAuthorKeys,
+  verifyWireMessage,
+  fingerprintOfPublicKey,
+  registerIdentityKey,
+  clearIdentityKey,
+  requestAdminTicket,
+  signWireMessage,
+  importIdentityJwk,
+} from "./identity";
 
 /* ---------- persistence of local prefs ---------- */
 
@@ -354,9 +379,14 @@ function loadPrefs() {
       prefs.userId = deriveUserIdFromAccessKey(prefs.permanentKey);
     }
   } catch {
-    // If derivation throws for any reason, generate a valid key and ID fallback
-    prefs.permanentKey = generatePermanentAccessKey();
-    prefs.userId = generateUserId();
+    // If derivation throws for any reason, generate a valid key and derive a
+    // matching ID; only fall back to a random ID if secure keygen itself fails.
+    try {
+      prefs.permanentKey = generatePermanentAccessKey();
+      prefs.userId = deriveUserIdFromAccessKey(prefs.permanentKey);
+    } catch {
+      prefs.userId = generateUserId();
+    }
   }
 
   savePrefs();
@@ -596,9 +626,6 @@ async function attachVerification(
   const signed = rows.filter((r) => typeof r.sig === "string" && r.sig);
   if (signed.length === 0) return;
   try {
-    const { fetchAuthorKeys, verifyWireMessage, fingerprintOfPublicKey } =
-      await import("./identity");
-    const { pinContactKey } = await import("./contacts");
     const keys = await fetchAuthorKeys(signed.map((r) => r.author_id));
     const byId = new Map(decoded.map((m) => [m.id, m]));
     await Promise.all(
@@ -860,11 +887,9 @@ async function loadSpaces() {
   }
 
   try {
-    // Best-effort server TTL sweep (also enforced inside every read RPC + nightly pg_cron).
-    void supabase.rpc("cleanup_expired_chats").then(
-      () => undefined,
-      () => undefined,
-    );
+    // NOTE: the client no longer calls cleanup_expired_chats directly —
+    // EXECUTE was revoked from anon in the security-hardening migration.
+    // Pruning is owned by the nightly pg_cron job plus the per-read sweeps.
     const { getRoomPassword } = await import("./roomCrypto");
     // Keep password-gated rooms visible even when the cached password is
     // missing (fresh tab before migration, user cleared storage, join on a
@@ -994,6 +1019,15 @@ async function refreshActiveSpace() {
 export function hydrate() {
   if (typeof window === "undefined") return;
 
+  // Idempotent: render-phase and effect calls after the first run must be
+  // no-ops. The guard runs FIRST so repeat calls never stack the fail-safe
+  // timer below and never re-wipe a shared device's freshly-created identity.
+  if (hydrated) {
+    if (!state.ready) set({ ready: true });
+    return;
+  }
+  hydrated = true;
+
   // Shared-device safety: never resume a previous identity here.
   if (isEphemeralDevice()) {
     wipeStoredIdentity();
@@ -1011,12 +1045,6 @@ export function hydrate() {
       set({ ready: true });
     }
   }, 1000);
-
-  if (hydrated) {
-    set({ ready: true });
-    return;
-  }
-  hydrated = true;
 
   try {
     loadPrefs();
@@ -1086,7 +1114,6 @@ export function ensureRegisteredIdentity(): void {
     if (!uid || !key) return;
     void (async () => {
       try {
-        const { registerIdentityKey } = await import("./identity");
         await registerIdentityKey(uid, key);
       } catch {
         /* best-effort */
@@ -1114,7 +1141,7 @@ export function regenerateId() {
   set({ userId: prefs.userId });
   // New identity = new keypair: drop the old device key so one is generated.
   try {
-    void import("./identity").then((m) => m.clearIdentityKey());
+    clearIdentityKey();
   } catch {
     /* ignore */
   }
@@ -1166,11 +1193,6 @@ export async function createSpace(
   }
   rememberCode(space.code);
   void registerMembership(space.code, state.userId);
-  // Best-effort server-side TTL sweep (also runs on reads + nightly pg_cron).
-  void supabase.rpc("cleanup_expired_chats").then(
-    () => undefined,
-    () => undefined,
-  );
   set({ spaces: [space, ...state.spaces], activeSpaceId: space.id });
   persistOfflineSnapshot();
   return space;
@@ -1259,7 +1281,6 @@ type AdminAction = "set_password" | "set_lock" | "set_readonly" | "kick" | "unba
 /** Mint a signed admin ticket (null when identity is unavailable). */
 async function ownerTicket(action: AdminAction, space: Space): Promise<string | null> {
   try {
-    const { requestAdminTicket } = await import("./identity");
     return await requestAdminTicket(action, space.code, state.userId);
   } catch {
     return null;
@@ -1491,7 +1512,6 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
     // Phase 2: sign the exact wire payload (best-effort; null on legacy devices).
     let p_sig: string | null = null;
     try {
-      const { signWireMessage } = await import("./identity");
       p_sig = await signWireMessage({
         code: space.code,
         authorId: state.userId,
@@ -1605,7 +1625,6 @@ export async function editMessage(messageId: string, spaceId: string, text: stri
   }
   let p_sig: string | null = null;
   try {
-    const { signWireMessage } = await import("./identity");
     p_sig = await signWireMessage({
       code: space.code,
       authorId: state.userId,
@@ -1836,8 +1855,8 @@ export function forgetIdentity() {
   prefs = { userId: "", displayName: "You", codes: [], permanentKey: "" };
   hydrated = false;
   try {
-    void import("./identity").then((m) => m.clearIdentityKey());
-    void import("./contacts").then((m) => m.clearContacts());
+    clearIdentityKey();
+    clearContacts();
   } catch {
     /* ignore */
   }
@@ -1858,7 +1877,7 @@ export function getPermanentKey(): string {
   return prefs.permanentKey || "";
 }
 
-export function getBackupPayload(): string {
+export async function getBackupPayload(): Promise<string> {
   loadPrefs();
   const key = prefs.permanentKey || "";
   // Contacts ride along so the people list survives restores.
@@ -1869,23 +1888,51 @@ export function getBackupPayload(): string {
     contacts = undefined;
   }
   // The device identity private key rides along too (same trust root as the
-  // access key itself): restoring keeps the SAME verifiable identity.
+  // access key itself): restoring keeps the SAME verifiable identity. The
+  // whole payload is AES-GCM encrypted — the token alone cannot be opened
+  // without the permanent access key supplied separately at restore time.
   let idk: { kty: string; crv: string; x: string; y: string; d: string } | undefined;
   try {
     idk = exportIdentityJwk();
   } catch {
     idk = undefined;
   }
-  return createFullBackupPayload(key, prefs.displayName, prefs.codes, contacts, idk);
+  return await createFullBackupPayload(key, prefs.displayName, prefs.codes, contacts, idk);
 }
 
-export async function restoreFromPermanentKey(input: string): Promise<{
+export async function restoreFromPermanentKey(
+  input: string,
+  backupToken?: string,
+): Promise<{
   success: boolean;
   message: string;
   userId?: string;
 }> {
   try {
-    const parsed = parseBackupInput(input);
+    // Two-field restore: classify each field as "backup token" vs "access key"
+    // so users can paste them in either field pair (legacy tokens are
+    // self-contained and work in a single field).
+    const primary = (input ?? "").trim();
+    const secondary = (backupToken ?? "").trim();
+    let token = "";
+    let keyField = "";
+    if (isBackupToken(primary)) token = primary;
+    else if (primary) keyField = primary;
+    if (secondary) {
+      if (isBackupToken(secondary)) {
+        if (!token) token = secondary;
+      } else if (!keyField) {
+        keyField = secondary;
+      }
+    }
+
+    const parsed = token
+      ? await parseBackupInput(token, keyField || undefined)
+      : await parseBackupInput(keyField);
+    if (parsed.error || !parsed.key) {
+      return { success: false, message: parsed.error || "Invalid permanent access key" };
+    }
+
     const validation = validatePermanentAccessKey(parsed.key);
     if (!validation.valid) {
       return { success: false, message: validation.error || "Invalid permanent access key" };
@@ -1909,7 +1956,6 @@ export async function restoreFromPermanentKey(input: string): Promise<{
     }
     if (parsed.idk) {
       try {
-        const { importIdentityJwk } = await import("./identity");
         importIdentityJwk(parsed.idk);
       } catch {
         /* a fresh keypair will be generated instead */

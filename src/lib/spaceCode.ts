@@ -6,18 +6,19 @@ export const SPACE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 export function generateSecureSpaceCode(): string {
   const pick = (n: number): string => {
-    let out = "";
-    if (typeof window !== "undefined" && window.crypto?.getRandomValues) {
-      const buf = new Uint32Array(n);
-      window.crypto.getRandomValues(buf);
-      for (let i = 0; i < n; i++) {
-        const v = buf[i] ?? 0;
-        out += SPACE_ALPHABET[v % SPACE_ALPHABET.length];
-      }
-      return out;
+    // Fail closed: a join code is a credential, so never fall back to
+    // Math.random — it is predictable and would make codes guessable.
+    const api = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+    if (!api || typeof api.getRandomValues !== "function") {
+      throw new Error(
+        "Secure randomness is unavailable. Run the app over HTTPS (secure context) to create spaces.",
+      );
     }
+    const buf = new Uint32Array(n);
+    api.getRandomValues(buf);
+    let out = "";
     for (let i = 0; i < n; i++) {
-      out += SPACE_ALPHABET[Math.floor(Math.random() * SPACE_ALPHABET.length)];
+      out += SPACE_ALPHABET[(buf[i] ?? 0) % SPACE_ALPHABET.length];
     }
     return out;
   };

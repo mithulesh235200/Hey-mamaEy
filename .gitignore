@@ -16,6 +16,17 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Generated verification artifacts (tsc/build/lint scratch outputs)
+/tsc_*.txt
+/build_*.txt
+/lint_*.txt
+
+# Tooling caches
+.output/
+.vinxi/
+coverage/
+supabase/.temp/
+
 # IDE
 .idea/
 .vscode/

@@ -153,6 +153,12 @@ export function InAppCall({
   const offerRetryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Answer re-send timers (acceptCall) — tracked so clearTimers() releases them.
+  const resendTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  // Bumped whenever the signaling channel is torn down (unmount, or a space/
+  // user switch) so in-flight setup can detect it and release the camera.
+  const callSessionRef = useRef(0);
+  const unmountedRef = useRef(false);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -184,6 +190,8 @@ export function InAppCall({
       clearTimeout(connectionTimeoutRef.current);
       connectionTimeoutRef.current = null;
     }
+    for (const timer of resendTimersRef.current) clearTimeout(timer);
+    resendTimersRef.current = [];
   };
 
   const send = async (event: string, payload: CallSignal) => {
@@ -294,8 +302,20 @@ export function InAppCall({
     }
   };
 
-  const createPeer = async (callId: string, callMode: CallMode, remoteUserId?: string) => {
+  const createPeer = async (
+    callId: string,
+    callMode: CallMode,
+    remoteUserId?: string,
+    isStale?: () => boolean,
+  ) => {
     const stream = await getUserMediaWithFallback(callMode);
+    // The call was torn down while the camera/mic permission prompt was open:
+    // release the tracks immediately so the indicator never stays on after
+    // the user leaves the space or closes the call UI.
+    if (isStale?.()) {
+      stream.getTracks().forEach((track) => track.stop());
+      throw new Error("Call cancelled.");
+    }
     const peer = new RTCPeerConnection(ICE_SERVERS);
     stream.getTracks().forEach((track) => peer.addTrack(track, stream));
 
@@ -389,7 +409,11 @@ export function InAppCall({
     if (activeRef.current) return;
     setError("");
 
+    const session = callSessionRef.current;
+    const isStale = () => unmountedRef.current || session !== callSessionRef.current;
+
     const isSubscribed = await waitForChannelSubscription();
+    if (isStale()) return; // user left the space / closed the call UI while waiting
     if (!isSubscribed) {
       setError("Network connecting — please wait a moment and tap call again.");
       return;
@@ -397,7 +421,7 @@ export function InAppCall({
 
     const callId = crypto.randomUUID();
     try {
-      const peer = await createPeer(callId, callMode);
+      const peer = await createPeer(callId, callMode, undefined, isStale);
       const offer = await peer.createOffer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: callMode === "video",
@@ -433,7 +457,9 @@ export function InAppCall({
       }, 35000);
     } catch (err) {
       closePeer();
-      setError(err instanceof Error ? err.message : "Camera or microphone permission required.");
+      if (!isStale()) {
+        setError(err instanceof Error ? err.message : "Camera or microphone permission required.");
+      }
     }
   };
 
@@ -441,9 +467,11 @@ export function InAppCall({
     const offerSignal = pendingOfferRef.current;
     if (!offerSignal?.offer) return;
     setError("");
+    const session = callSessionRef.current;
+    const isStale = () => unmountedRef.current || session !== callSessionRef.current;
     try {
       const callMode = offerSignal.mode ?? "video";
-      const peer = await createPeer(offerSignal.callId, callMode, offerSignal.from);
+      const peer = await createPeer(offerSignal.callId, callMode, offerSignal.from, isStale);
       await peer.setRemoteDescription(offerSignal.offer);
       await processQueuedCandidates();
       const answer = await peer.createAnswer();
@@ -461,24 +489,30 @@ export function InAppCall({
         );
       }
 
-      // Re-send answer twice to guarantee delivery
-      setTimeout(() => {
-        if (peerRef.current?.connectionState !== "connected") {
-          void send("call-answer", answerPayload);
-        }
-      }, 1000);
-      setTimeout(() => {
-        if (peerRef.current?.connectionState !== "connected") {
-          void send("call-answer", answerPayload);
-        }
-      }, 2500);
+      // Re-send answer twice to guarantee delivery (tracked so clearTimers()
+      // releases them if the call is closed before they fire).
+      resendTimersRef.current.push(
+        setTimeout(() => {
+          if (peerRef.current?.connectionState !== "connected") {
+            void send("call-answer", answerPayload);
+          }
+        }, 1000),
+        setTimeout(() => {
+          if (peerRef.current?.connectionState !== "connected") {
+            void send("call-answer", answerPayload);
+          }
+        }, 2500),
+      );
 
+      if (isStale()) return; // torn down while the camera prompt was open
       pendingOfferRef.current = null;
       incomingRef.current = null;
       setIncoming(null);
     } catch (err) {
       closePeer();
-      setError(err instanceof Error ? err.message : "Camera or microphone permission required.");
+      if (!isStale()) {
+        setError(err instanceof Error ? err.message : "Camera or microphone permission required.");
+      }
     }
   };
 
@@ -490,6 +524,13 @@ export function InAppCall({
     closePeer();
     onClose();
   };
+
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
 
   useEffect(() => {
     channelSubscribedRef.current = false;
@@ -583,6 +624,8 @@ export function InAppCall({
       });
 
     return () => {
+      // Invalidate any in-flight startCall/acceptCall awaiting the camera.
+      callSessionRef.current += 1;
       channelSubscribedRef.current = false;
       channel.unsubscribe();
       channelRef.current = null;
