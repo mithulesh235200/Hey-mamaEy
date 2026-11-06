@@ -21,8 +21,10 @@ export type Database = {
           kind: string;
           mime_type: string | null;
           read_at: string | null;
+          reply_to: string | null;
           space_id: string;
           text: string | null;
+          thread_parent_id: string | null;
         };
         Insert: {
           author_id: string;
@@ -36,8 +38,10 @@ export type Database = {
           kind?: string;
           mime_type?: string | null;
           read_at?: string | null;
+          reply_to?: string | null;
           space_id: string;
           text?: string | null;
+          thread_parent_id?: string | null;
         };
         Update: {
           author_id?: string;
@@ -51,8 +55,10 @@ export type Database = {
           kind?: string;
           mime_type?: string | null;
           read_at?: string | null;
+          reply_to?: string | null;
           space_id?: string;
           text?: string | null;
+          thread_parent_id?: string | null;
         };
         Relationships: [
           {
@@ -75,6 +81,7 @@ export type Database = {
           name: string;
           owner_id: string | null;
           password_hash?: string | null;
+          retention: string;
         };
         Insert: {
           code: string;
@@ -85,6 +92,7 @@ export type Database = {
           name: string;
           owner_id?: string | null;
           password_hash?: string | null;
+          retention?: string;
         };
         Update: {
           code?: string;
@@ -95,6 +103,7 @@ export type Database = {
           name?: string;
           owner_id?: string | null;
           password_hash?: string | null;
+          retention?: string;
         };
         Relationships: [];
       };
@@ -119,7 +128,7 @@ export type Database = {
         }[];
       };
       get_space_messages_since: {
-        Args: { p_after: string; p_code: string; p_password_hash?: string };
+        Args: { p_after: string; p_code: string; p_password_hash?: string; p_user_id?: string };
         Returns: {
           author_id: string;
           author_name: string;
@@ -132,9 +141,58 @@ export type Database = {
           kind: string;
           mime_type: string | null;
           read_at: string | null;
+          reply_to: string | null;
           space_id: string;
           text: string | null;
+          thread_parent_id: string | null;
         }[];
+      };
+      get_space_messages_before: {
+        Args: { p_before: string; p_code: string; p_password_hash?: string; p_user_id?: string };
+        Returns: {
+          author_id: string;
+          author_name: string;
+          created_at: string;
+          data_url: string | null;
+          file_name: string | null;
+          file_size: number | null;
+          forwarded: boolean;
+          id: string;
+          kind: string;
+          mime_type: string | null;
+          read_at: string | null;
+          reply_to: string | null;
+          space_id: string;
+          text: string | null;
+          thread_parent_id: string | null;
+        }[];
+      };
+      get_space_reactions: {
+        Args: { p_code: string; p_password_hash?: string; p_user_id?: string };
+        Returns: {
+          emoji: string;
+          message_id: string;
+          user_id: string;
+        }[];
+      };
+      toggle_space_message_reaction: {
+        Args: {
+          p_code: string;
+          p_emoji: string;
+          p_message_id: string;
+          p_password_hash?: string;
+          p_user_id?: string;
+        };
+        Returns: boolean;
+      };
+      pin_space_message: {
+        Args: {
+          p_code: string;
+          p_message_id?: string | null;
+          p_password_hash?: string;
+          p_user_id?: string;
+        };
+        Returns: boolean;
       };
       delete_space_message: {
         Args: {
@@ -204,6 +262,8 @@ export type Database = {
           last_activity_at: string;
           name: string;
           owner_id: string | null;
+          pinned_message_id: string | null;
+          retention: string;
         };
         SetofOptions: {
           from: "*";
@@ -248,8 +308,10 @@ export type Database = {
           kind: string;
           mime_type: string | null;
           read_at: string | null;
+          reply_to: string | null;
           space_id: string;
           text: string | null;
+          thread_parent_id: string | null;
         }[];
         SetofOptions: {
           from: "*";
@@ -270,8 +332,10 @@ export type Database = {
           p_kind: string;
           p_mime_type?: string;
           p_password_hash?: string;
+          p_reply_to?: string;
           p_sig?: string;
           p_text?: string;
+          p_thread_parent_id?: string;
         };
         Returns: {
           author_id: string;
@@ -285,8 +349,10 @@ export type Database = {
           kind: string;
           mime_type: string | null;
           read_at: string | null;
+          reply_to: string | null;
           space_id: string;
           text: string | null;
+          thread_parent_id: string | null;
         };
         SetofOptions: {
           from: "*";
@@ -305,6 +371,10 @@ export type Database = {
       };
       set_space_readonly: {
         Args: { p_code: string; p_owner_id: string; p_readonly?: boolean; p_ticket?: string };
+        Returns: boolean;
+      };
+      set_space_retention: {
+        Args: { p_code: string; p_password_hash?: string; p_retention: string; p_user_id?: string };
         Returns: boolean;
       };
       kick_space_user: {
