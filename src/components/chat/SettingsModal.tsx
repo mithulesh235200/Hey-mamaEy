@@ -25,6 +25,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Capacitor } from "@capacitor/core";
 import {
   regenerateId,
   setDisplayName,
@@ -46,6 +47,7 @@ import {
   type Accent,
   type Theme,
 } from "@/lib/theme";
+import { enablePushForUser, disableWebPush } from "@/lib/push";
 
 export type { Accent, Theme };
 export type Density = "comfortable" | "compact";
@@ -247,6 +249,9 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
   const toggleMessageNotifications = async () => {
     if (messageNotifications) {
       setMessageNotifications(false);
+      // Stop background delivery too (web: unsubscribe; native keeps its own
+      // permission and re-registers on next launch).
+      void disableWebPush();
       return;
     }
     if (!("Notification" in window)) {
@@ -254,11 +259,19 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
       return;
     }
     const permission = await Notification.requestPermission();
-    if (permission === "granted") {
-      setMessageNotifications(true);
+    if (permission !== "granted") {
+      toast.error("Notification permission was not granted");
+      return;
+    }
+    setMessageNotifications(true);
+    // Web: subscribe to Web Push and upload the subscription now (this click
+    // is the user gesture browsers require). Native: registration already
+    // happens on launch, so this only flips the preference.
+    const ok = await enablePushForUser(userId);
+    if (Capacitor.isNativePlatform() || ok) {
       toast.success("Message notifications enabled");
     } else {
-      toast.error("Notification permission was not granted");
+      toast.error("Notifications enabled, but background push couldn't start");
     }
   };
 

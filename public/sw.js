@@ -1,4 +1,4 @@
-// Service Worker for Space Connect PWA — offline-first app shell.
+// Service Worker for HeyMamaEy PWA — offline-first app shell.
 //
 // Goals:
 // - The app OPENS offline (web + installed PWA): navigations fall back to the
@@ -7,9 +7,66 @@
 // - Chat DATA offline is handled by the app's localStorage snapshot (see
 //   heymama.ts); the SW never caches Supabase API responses.
 
-const CACHE_NAME = "space-connect-v2";
+const CACHE_NAME = "heymamaey-v2";
 const SHELL_URL = "/";
 const PRECACHE_URLS = ["/", "/manifest.json", "/heymama.jpeg", "/favicon.ico"];
+
+// ---------- Web Push (background notifications) ----------
+// Payload comes from supabase/functions/push-on-message:
+//   { title, body, space_code, message_id }
+
+function deepLinkFor(spaceCode) {
+  // heymama.ts reads ?space=CODE on load and opens that Space.
+  // Absolute URL: clients.openWindow()/navigate() resolve against origin.
+  const path = spaceCode ? `${SHELL_URL}?space=${encodeURIComponent(spaceCode)}` : SHELL_URL;
+  return new URL(path, self.location.origin).href;
+}
+
+self.addEventListener("push", (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = { body: event.data ? event.data.text() : "" };
+  }
+  const title = payload.title || "HeyMamaEy";
+  const options = {
+    body: payload.body || "New message",
+    tag: payload.space_code ? `space-${payload.space_code}` : "heymamaey",
+    renotify: true,
+    icon: "/heymama.jpeg",
+    badge: "/favicon.ico",
+    data: { space_code: payload.space_code || "" },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const spaceCode = event.notification.data?.space_code || "";
+  const url = deepLinkFor(spaceCode);
+  event.waitUntil(
+    (async () => {
+      const allClients = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+      // Focus an already-open tab and hand it the deep link.
+      for (const client of allClients) {
+        if ("focus" in client) {
+          await client.focus();
+          if ("navigate" in client) {
+            await client.navigate(url).catch(() => undefined);
+            return;
+          }
+          return;
+        }
+      }
+      // No tab open: open the app straight into that Space.
+      await self.clients.openWindow(url);
+    })(),
+  );
+});
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -93,7 +150,7 @@ self.addEventListener("fetch", (event) => {
           if (cached) return cached;
           const shell = await caches.match(SHELL_URL);
           if (shell) return shell;
-          return new Response("Offline — reconnect to load Space Connect.", {
+          return new Response("Offline — reconnect to load HeyMamaEy.", {
             status: 503,
             headers: { "Content-Type": "text/plain" },
           });

@@ -23,6 +23,19 @@ export type Message = {
   longitude?: number;
   locationName?: string;
   threadParentId?: string;
+  /**
+   * Server-backed relation: id of the message this one replies to
+   * (`messages.reply_to` column). Legacy messages carry their quote as a
+   * `> Replying to @...` text prefix instead — see MessageBubble.
+   */
+  replyToId?: string;
+  /**
+   * Legacy fallback: `threadParentId` was parsed from the old trailing
+   * `\n__thread__:<id>` text marker rather than the `thread_parent_id`
+   * column. Edits of such messages must re-emit the marker or the relation
+   * would be lost with the old text.
+   */
+  threadFromMarker?: boolean;
   p2pTransferId?: string;
   p2pFileName?: string;
   p2pFileSize?: number;
@@ -39,7 +52,12 @@ export type Message = {
    * impersonation), null/undefined = unverifiable (legacy unsigned or no key).
    */
   verified?: boolean | null;
+  /** Server-backed reactions: emoji -> { count, mine }. Synced across devices. */
+  reactions?: Record<string, { count: number; mine: boolean }>;
 };
+
+/** Per-Space auto-destruct (disappearing messages) policy. */
+export type SpaceRetention = "off" | "24h" | "7d" | "30d";
 
 export type Space = {
   id: string;
@@ -51,6 +69,10 @@ export type Space = {
   isLocked?: boolean;
   isReadonly?: boolean;
   expiresAt?: number | null;
+  /** Server-backed pin: message id pinned for the whole Space (null = none). */
+  pinnedMessageId?: string | null;
+  /** Server-backed auto-destruct: messages older than this are deleted. */
+  retention?: SpaceRetention;
 };
 
 export type State = {
@@ -63,6 +85,8 @@ export type State = {
   readTimestamps: Record<string, number>; // spaceId -> lastReadTime
   hiddenMessageIds: string[]; // message IDs the user deleted for themselves only
   ready: boolean;
+  /** True when the last message sync failed (network/RPC) — drives the retry banner. */
+  syncError: boolean;
 };
 
 const PREFS_KEY = "heymamaey.prefs.v2";
@@ -151,7 +175,10 @@ function persistOfflineSnapshot() {
 function restoreOfflineSnapshot(): boolean {
   const snapshot = loadOfflineSnapshot();
   if (!snapshot || (snapshot.spaces.length === 0 && snapshot.messages.length === 0)) return false;
-  set({ spaces: snapshot.spaces, messages: snapshot.messages });
+  set({
+    spaces: snapshot.spaces,
+    messages: filterRetained(snapshot.messages, snapshot.spaces),
+  });
   return true;
 }
 
@@ -162,6 +189,7 @@ type OutboxEntry = {
   spaceId: string;
   text: string;
   threadParentId?: string;
+  replyToId?: string;
   createdAt: number;
 };
 
@@ -197,6 +225,7 @@ function queueOfflineTextMessage(msg: {
   spaceId: string;
   text: string;
   threadParentId?: string;
+  replyToId?: string;
 }): boolean {
   const space = state.spaces.find((s) => s.id === msg.spaceId);
   if (!space) return false;
@@ -206,6 +235,7 @@ function queueOfflineTextMessage(msg: {
     spaceId: msg.spaceId,
     text: msg.text,
     ...(msg.threadParentId !== undefined && { threadParentId: msg.threadParentId }),
+    ...(msg.replyToId !== undefined && { replyToId: msg.replyToId }),
     createdAt: Date.now(),
   };
   const optimistic: Message = {
@@ -216,6 +246,7 @@ function queueOfflineTextMessage(msg: {
     kind: "text",
     text: msg.text,
     ...(msg.threadParentId !== undefined && { threadParentId: msg.threadParentId }),
+    ...(msg.replyToId !== undefined && { replyToId: msg.replyToId }),
     createdAt: entry.createdAt,
     queued: true,
   };
@@ -238,6 +269,7 @@ export async function flushOutbox(): Promise<void> {
         kind: "text",
         text: entry.text,
         ...(entry.threadParentId !== undefined && { threadParentId: entry.threadParentId }),
+        ...(entry.replyToId !== undefined && { replyToId: entry.replyToId }),
       });
       if (!ok) break; // still offline / failing — retry on next reconnect
       saveOutboxEntries(loadOutboxEntries().filter((e) => e.tempId !== entry.tempId));
@@ -290,6 +322,7 @@ const initialState: State = {
   readTimestamps: {},
   hiddenMessageIds: [],
   ready: false,
+  syncError: false,
 };
 
 let state: State = initialState;
@@ -315,6 +348,20 @@ export const store = {
 
 export function useChatState(): State {
   return useSyncExternalStore(store.subscribe, store.get, () => initialState);
+}
+
+/** Only writes (and therefore re-renders) when the flag actually changes. */
+function setSyncError(failed: boolean) {
+  if (state.syncError !== failed) set({ syncError: failed });
+}
+
+/** Reactive "last message sync failed" flag for load/error banners. */
+export function useSyncError(): boolean {
+  return useSyncExternalStore(
+    store.subscribe,
+    () => state.syncError,
+    () => false,
+  );
 }
 
 import {
@@ -496,6 +543,8 @@ type SpaceRow = {
   is_locked?: boolean | null;
   is_readonly?: boolean | null;
   expires_at?: string | null;
+  pinned_message_id?: string | null;
+  retention?: string | null;
 };
 type MessageRow = {
   id: string;
@@ -511,6 +560,8 @@ type MessageRow = {
   forwarded: boolean;
   read_at?: string | null;
   sig?: string | null;
+  reply_to?: string | null;
+  thread_parent_id?: string | null;
   created_at: string;
 };
 
@@ -526,6 +577,8 @@ const toSpace = (r: SpaceRow): Space => ({
   ...(r.expires_at !== undefined && {
     expiresAt: r.expires_at ? new Date(r.expires_at).getTime() : null,
   }),
+  ...(r.pinned_message_id !== undefined && { pinnedMessageId: r.pinned_message_id }),
+  ...(r.retention != null && { retention: r.retention as SpaceRetention }),
 });
 
 const toMessage = (r: MessageRow): Message => {
@@ -536,12 +589,21 @@ const toMessage = (r: MessageRow): Message => {
   let text: string | undefined = r.text ?? undefined;
   const fileName: string | undefined = r.file_name ?? undefined;
   let fileSize: number | undefined = r.file_size != null ? Number(r.file_size) : undefined;
-  let threadParentId: string | undefined;
+  let threadParentId: string | undefined = r.thread_parent_id ?? undefined;
+  let threadFromMarker = false;
+  const replyToId: string | undefined = r.reply_to ?? undefined;
 
+  // Legacy fallback: thread relations used to ride inside the text as a
+  // trailing marker. Prefer the real column; still strip a stray marker so it
+  // never leaks into the rendered message.
   if (text && text.includes(THREAD_MARKER)) {
     const idx = text.lastIndexOf(THREAD_MARKER);
-    threadParentId = text.slice(idx + THREAD_MARKER.length).trim() || undefined;
+    const markerId = text.slice(idx + THREAD_MARKER.length).trim() || undefined;
     text = text.slice(0, idx) || undefined;
+    if (!threadParentId && markerId) {
+      threadParentId = markerId;
+      threadFromMarker = true;
+    }
   }
 
   let latitude: number | undefined;
@@ -599,6 +661,8 @@ const toMessage = (r: MessageRow): Message => {
     ...(longitude !== undefined && { longitude }),
     ...(locationName !== undefined && { locationName }),
     ...(threadParentId !== undefined && { threadParentId }),
+    ...(threadFromMarker && { threadFromMarker: true }),
+    ...(replyToId !== undefined && { replyToId }),
     ...(p2pTransferId !== undefined && { p2pTransferId }),
     ...(p2pFileName !== undefined && { p2pFileName }),
     ...(p2pFileSize !== undefined && { p2pFileSize }),
@@ -732,17 +796,47 @@ async function fetchSpace(
 }
 
 async function decryptIfNeeded(msg: Message, code: string): Promise<Message> {
-  if (!msg.text || !msg.text.startsWith("__enc1__.")) return msg;
+  const encText =
+    typeof msg.text === "string" && msg.text.startsWith("__enc1__.") ? msg.text : null;
+  const encMedia =
+    typeof msg.dataUrl === "string" && msg.dataUrl.startsWith("__enc1__.") ? msg.dataUrl : null;
+  // Legacy plaintext attachments (data:...) pass straight through untouched.
+  if (!encText && !encMedia) return msg;
   try {
-    const { decryptRoomText, getRoomPassword } = await import("./roomCrypto");
-    const plain = await decryptRoomText(msg.text, code, getRoomPassword(code));
-    if (plain === null) {
-      return {
-        ...msg,
-        text: "🔒 Encrypted message — enter the Space password to decrypt.",
-        locked: true,
-      };
+    const { decryptRoomText, decryptRoomDataUrl, getRoomPassword } = await import("./roomCrypto");
+    const pw = getRoomPassword(code);
+
+    let plainText: string | null = msg.text ?? null;
+    if (encText) {
+      plainText = await decryptRoomText(encText, code, pw);
+      if (plainText === null) {
+        return {
+          ...msg,
+          text: "🔒 Encrypted message — enter the Space password to decrypt.",
+          locked: true,
+        };
+      }
     }
+
+    let dataUrl = msg.dataUrl;
+    if (encMedia) {
+      const plain = await decryptRoomDataUrl(encMedia, code, pw);
+      if (plain === null) {
+        // Wrong password / corrupt payload: show a locked placeholder instead
+        // of a broken <img>/<video> (media kinds only render when dataUrl exists).
+        const { dataUrl: _undecryptable, ...rest } = msg;
+        return {
+          ...rest,
+          kind: "text",
+          text: "🔒 Encrypted attachment — enter the Space password to decrypt.",
+          locked: true,
+        };
+      }
+      dataUrl = plain;
+    }
+
+    if (!encText) return dataUrl === undefined ? msg : { ...msg, dataUrl };
+
     // Re-run wire decoding on the decrypted payload (thread/location markers).
     const decoded = toMessage({
       id: msg.id,
@@ -750,51 +844,145 @@ async function decryptIfNeeded(msg: Message, code: string): Promise<Message> {
       author_id: msg.authorId,
       author_name: msg.authorName,
       kind: msg.kind === "p2p_file" || msg.kind === "location" ? "text" : msg.kind,
-      text: plain,
-      data_url: msg.dataUrl ?? null,
+      text: plainText,
+      data_url: dataUrl ?? null,
       file_name: msg.fileName ?? null,
       file_size: msg.fileSize ?? null,
       mime_type: msg.mimeType ?? null,
       forwarded: msg.forwarded ?? false,
       ...(msg.sig !== undefined && { sig: msg.sig }),
+      ...(msg.replyToId !== undefined && { reply_to: msg.replyToId }),
+      // A relation parsed from a legacy marker isn't a column value — let the
+      // marker re-parse below instead of promoting it to one.
+      ...(msg.threadParentId !== undefined &&
+        !msg.threadFromMarker && { thread_parent_id: msg.threadParentId }),
       created_at: new Date(msg.createdAt).toISOString(),
     } as MessageRow);
     return { ...decoded, id: msg.id, spaceId: msg.spaceId, createdAt: msg.createdAt };
   } catch {
+    if (encMedia) {
+      const { dataUrl: _undecryptable, ...rest } = msg;
+      return {
+        ...rest,
+        kind: "text",
+        text: "🔒 Encrypted attachment — unavailable.",
+        locked: true,
+      };
+    }
     return { ...msg, text: "🔒 Encrypted message — unavailable.", locked: true };
   }
 }
 
-async function fetchMessages(code: string): Promise<Message[]> {
+/**
+ * Fetch a Space's messages. Without `afterMs` this returns the full retained
+ * window (latest 100). With `afterMs` it only returns rows created at or after
+ * that timestamp, which keeps 10 s background polls cheap (no refetch of the
+ * whole window, no re-verification of every signature).
+ */
+/** Loads server-backed reaction rows and stamps them onto decoded messages. */
+async function attachReactions(
+  code: string,
+  messages: Message[],
+  p_password_hash: string | null,
+  p_user_id: string,
+): Promise<void> {
+  if (messages.length === 0) return;
+  try {
+    const { data, error } = await supabase.rpc("get_space_reactions", {
+      p_code: code,
+      ...(p_password_hash !== null && { p_password_hash }),
+      p_user_id,
+    });
+    if (error || !Array.isArray(data) || data.length === 0) return;
+    const byMessage = new Map<string, Record<string, { count: number; mine: boolean }>>();
+    for (const row of data as { message_id: string; emoji: string; user_id: string }[]) {
+      let rec = byMessage.get(row.message_id);
+      if (!rec) {
+        rec = {};
+        byMessage.set(row.message_id, rec);
+      }
+      const cur = rec[row.emoji] ?? { count: 0, mine: false };
+      rec[row.emoji] = {
+        count: cur.count + 1,
+        mine: cur.mine || (p_user_id !== "" && row.user_id === p_user_id),
+      };
+    }
+    for (const msg of messages) {
+      const rec = byMessage.get(msg.id);
+      if (rec) msg.reactions = rec;
+    }
+  } catch {
+    /* reactions are best-effort — messages still render without them */
+  }
+}
+
+async function fetchMessages(code: string, afterMs?: number): Promise<Message[]> {
   try {
     const { getRoomPassword, hashRoomPassword } = await import("./roomCrypto");
     const pw = getRoomPassword(code).trim();
     const p_password_hash = pw ? await hashRoomPassword(pw) : null;
-    const { data, error } = await supabase.rpc("get_space_messages", {
-      p_code: code,
-      ...(p_password_hash !== null && { p_password_hash }),
-      p_user_id: state.userId || prefs.userId || "",
-    });
+    const { data, error } =
+      afterMs != null
+        ? await supabase.rpc("get_space_messages_since", {
+            p_code: code,
+            p_after: new Date(afterMs).toISOString(),
+            ...(p_password_hash !== null && { p_password_hash }),
+            p_user_id: state.userId || prefs.userId || "",
+          })
+        : await supabase.rpc("get_space_messages", {
+            p_code: code,
+            ...(p_password_hash !== null && { p_password_hash }),
+            p_user_id: state.userId || prefs.userId || "",
+          });
     if (error) {
       // Banned IDs surface on send + sync; keep polling quiet here.
       if ((error.message ?? "").includes("SPACE_USER_BANNED")) throw new Error("SPACE_USER_BANNED");
+      // Real failure (network/RLS/RPC) — surface it so the UI can distinguish
+      // "no messages yet" from "couldn't load messages".
+      setSyncError(true);
       return [];
     }
     const rows = ((data ?? []) as MessageRow[]).map(toMessage);
     const decoded = await Promise.all(rows.map((m) => decryptIfNeeded(m, code)));
     await attachVerification(code, (data ?? []) as MessageRow[], decoded);
+    await attachReactions(code, decoded, p_password_hash, state.userId || prefs.userId || "");
+    setSyncError(false);
     return decoded;
   } catch (e) {
     if (e instanceof Error && e.message.includes("SPACE_USER_BANNED")) throw e;
+    setSyncError(true);
     return [];
   }
 }
 
-const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** How long each auto-destruct policy keeps messages (ms). 'off' = global 7-day default. */
+const RETENTION_MS: Record<SpaceRetention, number> = {
+  off: 7 * 24 * 60 * 60 * 1000,
+  "24h": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
+  "30d": 30 * 24 * 60 * 60 * 1000,
+};
 
-function filterRetained(messages: Message[]): Message[] {
-  const cutoff = Date.now() - RETENTION_MS;
-  return messages.filter((m) => m.createdAt >= cutoff);
+function cutoffFor(spaceId: string, now = Date.now()): number {
+  const space = state.spaces.find((s) => s.id === spaceId);
+  const ms = RETENTION_MS[space?.retention ?? "off"] ?? RETENTION_MS.off;
+  return now - ms;
+}
+
+/**
+ * Drops messages past their Space's auto-destruct window (the client-side
+ * mirror of the nightly prune, so the UI hides them the moment they expire).
+ * Queued (unsent) messages are always kept. Pass `spaces` when filtering a
+ * freshly fetched list whose Space rows aren't in state yet (hydrate).
+ */
+export function filterRetained(messages: Message[], spaces: Space[] = state.spaces): Message[] {
+  const now = Date.now();
+  const byId = new Map(spaces.map((s) => [s.id, s]));
+  return messages.filter((m) => {
+    if (m.queued) return true;
+    const ms = RETENTION_MS[byId.get(m.spaceId)?.retention ?? "off"] ?? RETENTION_MS.off;
+    return m.createdAt >= now - ms;
+  });
 }
 
 export async function syncUserSpacesFromCloud(userId: string): Promise<string[]> {
@@ -861,6 +1049,7 @@ async function loadSpaces() {
   // user's spaces + recent messages, then drain any queued sends on reconnect.
   if (isOffline()) {
     restoreOfflineSnapshot();
+    setSyncError(true);
     return;
   }
 
@@ -972,7 +1161,7 @@ async function loadSpaces() {
         }),
       ),
     );
-    const validMessages = filterRetained(messageLists.flat());
+    const validMessages = filterRetained(messageLists.flat(), spaces);
 
     // Empty fetch while we hold a snapshot usually means the network dropped
     // mid-sync — keep showing the saved data instead of blanking the app.
@@ -996,21 +1185,63 @@ async function loadSpaces() {
   } catch {
     // Keep the application usable if a network request is interrupted.
     restoreOfflineSnapshot();
-    set({ ready: true });
+    set({ ready: true, syncError: true });
   }
 }
+
+/** Full-window refresh cadence so edits/deletes of older rows are still seen. */
+const FULL_REFRESH_EVERY = 12; // ~2 min at POLL_MS = 10s
+/** Overlap back from the newest held message to absorb clock skew. */
+const SYNC_OVERLAP_MS = 15000;
+const fullRefreshCounter = new Map<string, number>();
 
 async function refreshActiveSpace() {
   const active = state.spaces.find((s) => s.id === state.activeSpaceId);
   if (!active) return;
   if (isOffline()) return;
   const currentRetained = filterRetained(state.messages.filter((m) => !m.queued));
-  const fresh = filterRetained(await fetchMessages(active.code));
+
+  // Incremental sync: ask only for rows newer than what we already hold.
+  // Every FULL_REFRESH_EVERY-th poll re-reads the full window so edits and
+  // deletes of older messages (which don't move created_at) still arrive.
+  const held = filterRetained(state.messages.filter((m) => m.spaceId === active.id && !m.queued));
+  const latest = held.reduce((max, m) => Math.max(max, m.createdAt), 0);
+  const nth = (fullRefreshCounter.get(active.code) ?? 0) + 1;
+  fullRefreshCounter.set(active.code, nth);
+  const fullRefresh = !latest || nth % FULL_REFRESH_EVERY === 0;
+  const fresh = filterRetained(
+    await fetchMessages(active.code, fullRefresh ? undefined : latest - SYNC_OVERLAP_MS),
+  );
+
+  // Incremental results only contain new/overlapping rows — merge them over
+  // the messages we hold instead of replacing the whole Space window.
+  const freshIds = new Set(fresh.map((m) => m.id));
+  let spaceMessages: Message[];
+  if (fullRefresh) {
+    const freshOldest = fresh.reduce(
+      (min, m) => Math.min(min, m.createdAt),
+      Number.POSITIVE_INFINITY,
+    );
+    // A full window (100 rows) means older held messages fall outside it and
+    // can't be checked for deletion — keep them so scroll-up history survives
+    // refreshes. Rows inside the window that vanished were deleted: drop them.
+    // A short window covers everything, so only `fresh` survives.
+    const keptOlder =
+      fresh.length >= 100
+        ? held.filter((m) => !freshIds.has(m.id) && m.createdAt < freshOldest)
+        : [];
+    spaceMessages = [...keptOlder, ...fresh].sort((a, b) => a.createdAt - b.createdAt);
+  } else {
+    spaceMessages = [...held.filter((m) => !freshIds.has(m.id)), ...fresh].sort(
+      (a, b) => a.createdAt - b.createdAt,
+    );
+  }
+
   set({
     messages: [
       ...currentRetained.filter((message) => message.spaceId !== active.id),
       ...state.messages.filter((m) => m.queued && m.spaceId === active.id),
-      ...fresh,
+      ...spaceMessages,
     ],
   });
   persistOfflineSnapshot();
@@ -1463,6 +1694,7 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
       spaceId: msg.spaceId,
       text: msg.text as string,
       ...(msg.threadParentId !== undefined && { threadParentId: msg.threadParentId }),
+      ...(msg.replyToId !== undefined && { replyToId: msg.replyToId }),
     });
   }
 
@@ -1489,17 +1721,28 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
     wireText = `${LOCATION_MARKER}${msg.latitude},${msg.longitude}|${msg.locationName ?? ""}`;
   }
 
-  if (msg.threadParentId) {
+  // Relations travel in real columns (reply_to / thread_parent_id). The text
+  // marker is only re-emitted for legacy messages whose relation was itself
+  // parsed from it — their edits replace the text wholesale.
+  if (msg.threadParentId && msg.threadFromMarker) {
     wireText = `${wireText ?? ""}${THREAD_MARKER}${msg.threadParentId}`;
   }
 
-  // Client-side encryption: text payloads are AES-GCM sealed with the room
-  // key BEFORE they hit Supabase, so the DB only ever sees ciphertext.
-  // Binary attachments (dataUrl) stay as-is in v1 and are covered by transport TLS.
+  // Client-side encryption: text payloads AND binary attachments are AES-GCM
+  // sealed with the room key BEFORE they hit Supabase, so the DB only ever
+  // sees ciphertext. Attachments are sealed as raw bytes so the wire stays
+  // ~the same length as the plaintext data URL (the server caps data_url at
+  // 18M chars). The __enc1__ prefix marks ciphertext for readers; legacy
+  // plaintext attachments keep working because decryption keys off it.
+  let wireDataUrl = msg.dataUrl;
   try {
     if (wireText !== undefined && wireKind === "text") {
       const { encryptRoomText, getRoomPassword } = await import("./roomCrypto");
       wireText = await encryptRoomText(wireText, space.code, getRoomPassword(space.code));
+    }
+    if (wireDataUrl?.startsWith("data:")) {
+      const { encryptRoomDataUrl, getRoomPassword } = await import("./roomCrypto");
+      wireDataUrl = await encryptRoomDataUrl(wireDataUrl, space.code, getRoomPassword(space.code));
     }
   } catch {
     return false;
@@ -1517,7 +1760,7 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
         authorId: state.userId,
         kind: wireKind,
         ...(wireText !== undefined && { wireText }),
-        ...(msg.dataUrl !== undefined && { dataUrl: msg.dataUrl }),
+        ...(wireDataUrl !== undefined && { dataUrl: wireDataUrl }),
         ...(wireFileName !== undefined && { fileName: wireFileName }),
         forwarded: msg.forwarded ?? false,
       });
@@ -1530,11 +1773,13 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
       p_author_name: state.displayName,
       p_kind: wireKind,
       ...(wireText !== undefined && { p_text: wireText }),
-      ...(msg.dataUrl !== undefined && { p_data_url: msg.dataUrl }),
+      ...(wireDataUrl !== undefined && { p_data_url: wireDataUrl }),
       ...(wireFileName !== undefined && { p_file_name: wireFileName }),
       ...(wireFileSize !== undefined && { p_file_size: wireFileSize }),
       ...(wireMimeType !== undefined && { p_mime_type: wireMimeType }),
       p_forwarded: msg.forwarded ?? false,
+      ...(msg.replyToId !== undefined && { p_reply_to: msg.replyToId }),
+      ...(msg.threadParentId !== undefined && { p_thread_parent_id: msg.threadParentId }),
       ...(p_password_hash !== null && { p_password_hash }),
       ...(p_sig !== null && { p_sig }),
     });
@@ -1669,6 +1914,176 @@ export async function deleteMessage(messageId: string, spaceId: string) {
   set({ messages: state.messages.filter((item) => item.id !== messageId) });
   persistOfflineSnapshot();
   return true;
+}
+
+/**
+ * Toggle the local user's reaction on a message (server-backed, synced to
+ * every member and across devices). Optimistically updates the store; returns
+ * true = reaction now present, false = removed, null = call failed.
+ */
+export async function toggleSpaceReaction(
+  messageId: string,
+  spaceId: string,
+  emoji: string,
+): Promise<boolean | null> {
+  const space = state.spaces.find((item) => item.id === spaceId);
+  if (!space) return null;
+  const { hashRoomPassword, getRoomPassword } = await import("./roomCrypto");
+  const pw = getRoomPassword(space.code).trim();
+  const pwHash = pw ? await hashRoomPassword(pw) : null;
+  const { data, error } = await supabase.rpc("toggle_space_message_reaction", {
+    p_code: space.code,
+    p_message_id: messageId,
+    p_emoji: emoji,
+    p_user_id: state.userId || prefs.userId || "",
+    ...(pwHash !== null && { p_password_hash: pwHash }),
+  });
+  if (error || typeof data !== "boolean") return null;
+  const present = data;
+  set({
+    messages: state.messages.map((item) => {
+      if (item.id !== messageId) return item;
+      const reactions = { ...(item.reactions ?? {}) };
+      const cur = reactions[emoji] ?? { count: 0, mine: false };
+      const nextCount = present
+        ? cur.count + (cur.mine ? 0 : 1)
+        : Math.max(0, cur.count - (cur.mine ? 1 : 0));
+      if (nextCount <= 0) delete reactions[emoji];
+      else reactions[emoji] = { count: nextCount, mine: present };
+      return { ...item, reactions };
+    }),
+  });
+  persistOfflineSnapshot();
+  return present;
+}
+
+/**
+ * Pin (messageId) or unpin (null) a message for the whole Space. The pin is
+ * stored on the Space row, so every member sees the same pinned banner.
+ */
+export async function setSpacePinnedMessage(
+  spaceId: string,
+  messageId: string | null,
+): Promise<boolean> {
+  const space = state.spaces.find((item) => item.id === spaceId);
+  if (!space) return false;
+  const { hashRoomPassword, getRoomPassword } = await import("./roomCrypto");
+  const pw = getRoomPassword(space.code).trim();
+  const pwHash = pw ? await hashRoomPassword(pw) : null;
+  const { error } = await supabase.rpc("pin_space_message", {
+    p_code: space.code,
+    p_message_id: messageId,
+    p_user_id: state.userId || prefs.userId || "",
+    ...(pwHash !== null && { p_password_hash: pwHash }),
+  });
+  if (error) return false;
+  set({
+    spaces: state.spaces.map((item) =>
+      item.id === spaceId ? { ...item, pinnedMessageId: messageId } : item,
+    ),
+  });
+  persistOfflineSnapshot();
+  return true;
+}
+
+/**
+ * Persists a Space's auto-destruct (disappearing messages) policy. The choice
+ * is server-backed so every member's device enforces the same window; a
+ * tighter policy hides already-expired messages immediately.
+ */
+export async function setSpaceRetention(
+  spaceId: string,
+  retention: SpaceRetention,
+): Promise<boolean> {
+  const space = state.spaces.find((item) => item.id === spaceId);
+  if (!space) return false;
+  const prev = space.retention ?? "off";
+  // Optimistic: the menu reflects the choice before the round-trip.
+  set({
+    spaces: state.spaces.map((item) => (item.id === spaceId ? { ...item, retention } : item)),
+  });
+  try {
+    const { hashRoomPassword, getRoomPassword } = await import("./roomCrypto");
+    const pw = getRoomPassword(space.code).trim();
+    const pwHash = pw ? await hashRoomPassword(pw) : null;
+    const { error } = await supabase.rpc("set_space_retention", {
+      p_code: space.code,
+      p_retention: retention,
+      p_user_id: state.userId || prefs.userId || "",
+      ...(pwHash !== null && { p_password_hash: pwHash }),
+    });
+    if (error) throw new Error(error.message);
+    set({ messages: filterRetained(state.messages) });
+    persistOfflineSnapshot();
+    return true;
+  } catch {
+    set({
+      spaces: state.spaces.map((item) =>
+        item.id === spaceId ? { ...item, retention: prev } : item,
+      ),
+    });
+    return false;
+  }
+}
+
+/** Space ids with no history older than what's loaded (stops scroll-up fetches). */
+const exhaustedOlder = new Set<string>();
+
+/**
+ * Loads the previous page of history for a Space (scroll-up pagination).
+ * Returns how many NEW messages were added; 0 means no older history remains
+ * (or the call failed). Safe to call repeatedly — exhausted Spaces short-circuit
+ * without touching the network.
+ */
+export async function loadOlderMessages(spaceId: string): Promise<number> {
+  if (exhaustedOlder.has(spaceId)) return 0;
+  const space = state.spaces.find((item) => item.id === spaceId);
+  if (!space) return 0;
+  const loaded = state.messages.filter((m) => m.spaceId === spaceId && !m.queued);
+  if (loaded.length === 0) return 0;
+  const oldest = loaded.reduce((min, m) => Math.min(min, m.createdAt), Number.POSITIVE_INFINITY);
+  const { getRoomPassword, hashRoomPassword } = await import("./roomCrypto");
+  const pw = getRoomPassword(space.code).trim();
+  const p_password_hash = pw ? await hashRoomPassword(pw) : null;
+  const p_user_id = state.userId || prefs.userId || "";
+  const { data, error } = await supabase.rpc("get_space_messages_before", {
+    p_code: space.code,
+    p_before: new Date(oldest).toISOString(),
+    ...(p_password_hash !== null && { p_password_hash }),
+    p_user_id,
+  });
+  if (error) return 0;
+  const rawRows = (data ?? []) as MessageRow[];
+  // A short page means we reached the start of history (retention window).
+  if (rawRows.length < 100) exhaustedOlder.add(spaceId);
+  // The widened 30-day fetch can outrun a tighter per-Space policy — drop
+  // rows that are already past their Space's auto-destruct window.
+  const now = Date.now();
+  const rows = rawRows.filter(
+    (r) => new Date(r.created_at).getTime() >= cutoffFor(r.space_id, now),
+  );
+  const existingIds = new Set(loaded.map((m) => m.id));
+  const decoded = await Promise.all(rows.map((r) => decryptIfNeeded(toMessage(r), space.code)));
+  const freshRows: MessageRow[] = [];
+  const fresh: Message[] = [];
+  rows.forEach((r, i) => {
+    const msg = decoded[i];
+    if (msg && !existingIds.has(msg.id)) {
+      freshRows.push(r);
+      fresh.push(msg);
+    }
+  });
+  if (fresh.length === 0) {
+    exhaustedOlder.add(spaceId);
+    return 0;
+  }
+  await attachVerification(space.code, freshRows, fresh);
+  await attachReactions(space.code, fresh, p_password_hash, p_user_id);
+  const others = state.messages.filter((m) => m.spaceId !== spaceId || m.queued);
+  const spaceMessages = [...loaded, ...fresh].sort((a, b) => a.createdAt - b.createdAt);
+  set({ messages: [...others, ...spaceMessages] });
+  persistOfflineSnapshot();
+  return fresh.length;
 }
 
 /* ---------- helpers ---------- */

@@ -46,6 +46,19 @@ function bodyWithoutQuote(text: string): string {
   return quote.rest || quote.snippet || text;
 }
 
+/** One-line preview of a quoted parent message (mirrors ChatPanel's replySnippet). */
+function quoteSnippet(m: Message): string {
+  const body = bodyWithoutQuote(m.text ?? "");
+  const raw = body
+    ? body.length > 60
+      ? body.slice(0, 60) + "..."
+      : body
+    : m.fileName || "attachment";
+  // Never nest a quote inside a quote preview.
+  const firstLine = raw.split("\n")[0] ?? "";
+  return firstLine.startsWith("> Replying to @") ? "message" : firstLine;
+}
+
 function renderRichText(body: string, mine: boolean, keyPrefix = "") {
   if (!body.includes("```")) return <span key={`${keyPrefix}plain`}>{body}</span>;
   return body.split(/(```[\s\S]*?```)/g).map((chunk, i) => {
@@ -133,6 +146,7 @@ export function MessageBubble({
   allMessages = [],
   onPollVote,
   currentUserId,
+  onToggleReaction,
 }: {
   message: Message;
   mine: boolean;
@@ -149,10 +163,10 @@ export function MessageBubble({
   allMessages?: Message[];
   onPollVote?: (poll: Message, option: number) => void;
   currentUserId?: string;
+  onToggleReaction?: (emoji: string) => void;
 }) {
   const [showMenu, setShowMenu] = useState(false);
   const [showReactions, setShowReactions] = useState(false);
-  const [reactions, setReactions] = useState<Record<string, number>>({});
   const [speaking, setSpeaking] = useState(false);
   const [saving, setSaving] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
@@ -191,7 +205,7 @@ export function MessageBubble({
     try {
       const result = await saveAttachmentToDevice(
         message.dataUrl,
-        message.fileName || `space-connect-${message.kind}-${Date.now()}`,
+        message.fileName || `heymamaey-${message.kind}-${Date.now()}`,
       );
       if (result.ok) {
         if (!result.shared) toast.success("Saved to your device!");
@@ -217,10 +231,9 @@ export function MessageBubble({
   };
 
   const toggleReaction = (emoji: string) => {
-    setReactions((prev) => {
-      const current = prev[emoji] || 0;
-      return { ...prev, [emoji]: current > 0 ? 0 : 1 };
-    });
+    // Server-backed: the parent persists it and the next sync reflects it on
+    // every member's screen (and on this device's other tabs).
+    onToggleReaction?.(emoji);
     setShowReactions(false);
   };
 
@@ -268,6 +281,11 @@ export function MessageBubble({
       (_, index) => [...latestVotes.values()].filter((vote) => vote === index).length,
     ) ?? [];
   const myVote = currentUserId ? latestVotes.get(currentUserId) : undefined;
+
+  // Server-backed reactions (synced across members/devices).
+  const reactionEntries = Object.entries(message.reactions ?? {}).filter(
+    ([, value]) => value.count > 0,
+  );
 
   return (
     <div className={`message-row group flex flex-col ${mine ? "items-end" : "items-start"}`}>
@@ -320,8 +338,19 @@ export function MessageBubble({
           {!poll && message.kind === "text" && message.text && (
             <div className="whitespace-pre-wrap break-words text-xs leading-relaxed sm:text-sm font-medium">
               {(() => {
-                const quote = splitQuote(message.text ?? "");
-                if (!quote) return renderRichText(message.text ?? "", mine);
+                // First-class replies carry the relation in reply_to — resolve
+                // the parent message for author + snippet. Legacy messages
+                // still embed a `> Replying to @...` first line (parsed below).
+                const parent = message.replyToId
+                  ? allMessages.find((m) => m.id === message.replyToId)
+                  : undefined;
+                const legacy = message.replyToId ? null : splitQuote(message.text ?? "");
+                if (!message.replyToId && !legacy) {
+                  return renderRichText(message.text ?? "", mine);
+                }
+                const author = parent ? parent.authorName || "User" : (legacy?.author ?? "");
+                const snippet = parent ? quoteSnippet(parent) : (legacy?.snippet ?? "");
+                const body = legacy ? legacy.rest : (message.text ?? "");
                 return (
                   <>
                     <div
@@ -332,13 +361,11 @@ export function MessageBubble({
                       }`}
                     >
                       <p className="truncate font-semibold opacity-90">
-                        {quote.author ? `↩ ${quote.author}` : "↩ Replied message"}
+                        {author ? `↩ ${author}` : "↩ Replied message"}
                       </p>
-                      {quote.snippet && (
-                        <p className="line-clamp-2 break-words opacity-75">{quote.snippet}</p>
-                      )}
+                      {snippet && <p className="line-clamp-2 break-words opacity-75">{snippet}</p>}
                     </div>
-                    {quote.rest && renderRichText(quote.rest, mine, "rest-")}
+                    {body && renderRichText(body, mine, "rest-")}
                   </>
                 );
               })()}
@@ -474,19 +501,21 @@ export function MessageBubble({
             </div>
           )}
 
-          {Object.entries(reactions).some(([, count]) => count > 0) && (
+          {reactionEntries.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1 pt-1">
-              {Object.entries(reactions).map(([emoji, count]) =>
-                count > 0 ? (
-                  <span
-                    key={emoji}
-                    onClick={() => toggleReaction(emoji)}
-                    className="inline-flex cursor-pointer items-center gap-0.5 rounded-full bg-background/90 px-1.5 py-0.5 text-[10px] font-semibold shadow-xs border border-border"
-                  >
-                    <span>{emoji}</span>
-                  </span>
-                ) : null,
-              )}
+              {reactionEntries.map(([emoji, value]) => (
+                <span
+                  key={emoji}
+                  onClick={() => toggleReaction(emoji)}
+                  title={value.mine ? "Remove your reaction" : "React with this emoji"}
+                  className={`inline-flex cursor-pointer items-center gap-0.5 rounded-full bg-background/90 px-1.5 py-0.5 text-[10px] font-semibold shadow-xs border ${
+                    value.mine ? "border-primary/70 text-primary" : "border-border"
+                  }`}
+                >
+                  <span>{emoji}</span>
+                  <span className="tabular-nums">{value.count}</span>
+                </span>
+              ))}
             </div>
           )}
 

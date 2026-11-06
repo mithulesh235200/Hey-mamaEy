@@ -7,6 +7,7 @@ import { Capacitor } from "@capacitor/core";
 import { MobileHome, type MobileTab } from "@/components/chat/MobileHome";
 import { Sidebar } from "@/components/chat/Sidebar";
 import {
+  filterRetained,
   hydrate,
   joinSpace,
   markSpaceAsRead,
@@ -68,9 +69,11 @@ function Index() {
     () => state.spaces.find((s) => s.id === state.activeSpaceId) ?? null,
     [state.spaces, state.activeSpaceId],
   );
-  // Messages the user deleted for themselves never render anywhere.
+  // Messages the user deleted for themselves never render anywhere, and
+  // messages past their Space's auto-destruct window are hidden everywhere
+  // (client-side mirror of the server-side prune).
   const visibleMessages = useMemo(
-    () => withoutHidden(state.messages, state.hiddenMessageIds),
+    () => filterRetained(withoutHidden(state.messages, state.hiddenMessageIds)),
     [state.messages, state.hiddenMessageIds],
   );
   const activeMessages = useMemo(() => {
@@ -112,7 +115,8 @@ function Index() {
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  // Background push notifications (native only; no-op on web).
+  // Background push notifications: native FCM flow, or silent Web Push
+  // re-subscribe on web/PWA (no-op until the user enables them in Settings).
   useEffect(() => {
     void initPushNotifications({
       getUserId: () => userIdRef.current,

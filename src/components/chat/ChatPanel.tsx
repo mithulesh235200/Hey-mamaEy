@@ -64,6 +64,7 @@ import {
   markSpaceAsRead,
   isOffline,
   useOnline,
+  useSyncError,
   getSpaceBans,
   unlockSpaceMessages,
   setSpacePassword,
@@ -71,10 +72,15 @@ import {
   setSpaceReadonly,
   kickSpaceUser,
   unbanSpaceUser,
+  toggleSpaceReaction,
+  setSpacePinnedMessage,
+  setSpaceRetention,
+  loadOlderMessages,
   THREAD_MARKER,
   type MediaKind,
   type Message,
   type Space,
+  type SpaceRetention,
 } from "@/lib/heymama";
 import { MessageBubble } from "./MessageBubble";
 import { createP2PSender } from "@/lib/p2p-file";
@@ -153,7 +159,7 @@ function playChime(type: "send" | "receive", muted: boolean) {
 type WallpaperStyle = "default" | "dots" | "grid" | "cosmic";
 type PhotoFilter = "none" | "grayscale" | "sepia" | "vintage" | "neon";
 type MediaTab = "all" | "image" | "video" | "audio" | "file";
-type DisappearingTimer = "off" | "24h" | "7d" | "30d";
+type DisappearingTimer = SpaceRetention;
 
 const QUICK_EMOJIS = ["🔥", "👍", "❤️", "🎉", "😂", "💯", "🚀", "👏"];
 const DRAFT_TEMPLATES = [
@@ -207,11 +213,9 @@ export function ChatPanel({
   const [wallpaper, setWallpaper] = useState<WallpaperStyle>(() => {
     return (localStorage.getItem("heymamaey.wallpaper") as WallpaperStyle) || "default";
   });
-  const [disappearingTimer, setDisappearingTimer] = useState<DisappearingTimer>(() => {
-    return (
-      (localStorage.getItem(`heymamaey.disappearing.${space?.id}`) as DisappearingTimer) || "off"
-    );
-  });
+  // Auto-destruct policy lives on the Space row (spaces.retention) so every
+  // member's device enforces the same window — derived, never a local copy.
+  const disappearingTimer: DisappearingTimer = space?.retention ?? "off";
   const [showDisappearingMenu, setShowDisappearingMenu] = useState(false);
   const [showWallpaperMenu, setShowWallpaperMenu] = useState(false);
   const [showSnippetsMenu, setShowSnippetsMenu] = useState(false);
@@ -255,6 +259,9 @@ export function ChatPanel({
   const isOwner = space?.ownerId === userId;
   const readOnlyForMe = Boolean(space?.isReadonly && !isOwner);
   const lockedCount = messages.filter((m) => m.locked).length;
+  // True when the last sync failed: shows a retry banner instead of letting a
+  // network failure masquerade as an empty chat.
+  const syncError = useSyncError();
 
   const [starredIds, setStarredIds] = useState<Set<string>>(() => {
     try {
@@ -290,6 +297,11 @@ export function ChatPanel({
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Scroll-up pagination: guard against re-entry and remember the list height
+  // so prepending older messages keeps the viewport visually anchored.
+  const loadingOlderRef = useRef(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [prependComp, setPrependComp] = useState<number | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const nearBottomRef = useRef(true);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -469,13 +481,15 @@ export function ChatPanel({
     toast.success(`Wallpaper changed to ${w}`);
   };
 
-  const changeDisappearingTimer = (timer: DisappearingTimer) => {
-    setDisappearingTimer(timer);
-    if (space?.id) {
-      localStorage.setItem(`heymamaey.disappearing.${space.id}`, timer);
-    }
+  const changeDisappearingTimer = async (timer: DisappearingTimer) => {
+    if (!space) return;
     setShowDisappearingMenu(false);
-    toast.success(`Disappearing timer set to ${timer === "off" ? "Off" : timer}`);
+    const ok = await setSpaceRetention(space.id, timer);
+    if (ok) {
+      toast.success(`Auto-destruct set to ${timer === "off" ? "off (default 7d)" : timer}`);
+    } else {
+      toast.error("Couldn't update auto-destruct — check the connection and try again");
+    }
   };
 
   const exportChatHistory = () => {
@@ -516,7 +530,7 @@ export function ChatPanel({
       toast.info("Saving to your device...");
       const result = await saveAttachmentToDevice(
         dataUrl,
-        fileName || `space-connect-file-${Date.now()}`,
+        fileName || `heymamaey-file-${Date.now()}`,
       );
       if (result.ok) {
         if (!result.shared) toast.success("Saved to your device!");
@@ -605,6 +619,30 @@ export function ChatPanel({
     toast[deleted ? "success" : "error"](
       deleted ? "Message deleted for everyone" : "Message could not be deleted",
     );
+  };
+
+  // Server-backed reactions: the optimistic update happens inside
+  // toggleSpaceReaction; a null result means the RPC failed.
+  const handleToggleReaction = (message: Message, emoji: string) => {
+    void toggleSpaceReaction(message.id, message.spaceId, emoji).then((result) => {
+      if (result === null) toast.error("Couldn't update reaction");
+    });
+  };
+
+  // Server-backed pin: stored on the Space row so every member (and every
+  // device of this user) sees the same pinned banner.
+  const handlePin = (message: Message) => {
+    void setSpacePinnedMessage(message.spaceId, message.id).then((ok) => {
+      toast[ok ? "success" : "error"](ok ? "Message pinned for everyone" : "Couldn't pin message");
+    });
+  };
+
+  const handleUnpin = () => {
+    if (!space) return;
+    void setSpacePinnedMessage(space.id, null).then((ok) => {
+      if (ok) toast.info("Message unpinned");
+      else toast.error("Couldn't unpin message");
+    });
   };
 
   // The channel only depends on the SPACE CODE (its name) and the local user
@@ -706,18 +744,10 @@ export function ChatPanel({
     });
   }, [displayName, userId]);
 
-  // Reload per-space disappearing timer when switching spaces (useState
-  // initializer only runs once, so it went stale before).
   useEffect(() => {
     if (!space?.id) return;
-    try {
-      const saved = localStorage.getItem(
-        `heymamaey.disappearing.${space.id}`,
-      ) as DisappearingTimer | null;
-      setDisappearingTimer(saved === "24h" || saved === "7d" || saved === "30d" ? saved : "off");
-    } catch {
-      setDisappearingTimer("off");
-    }
+    // The auto-destruct timer is derived from space.retention — nothing to
+    // reload here; just close its menu when switching Spaces.
     setShowDisappearingMenu(false);
     // Reset transient composer/panel state so one space never leaks into another.
     setReplyTo(null);
@@ -729,6 +759,9 @@ export function ChatPanel({
     setShowSearch(false);
     setRoomPasswordSettingInput("");
     nearBottomRef.current = true;
+    // Drop any in-flight scroll-up pagination state from the previous Space.
+    setLoadingOlder(false);
+    setPrependComp(null);
   }, [space?.id]);
 
   // Stop any in-progress voice recording when leaving / switching spaces.
@@ -831,6 +864,24 @@ export function ChatPanel({
     }
   };
 
+  const loadOlder = async () => {
+    const el = scrollContainerRef.current;
+    if (!el || loadingOlderRef.current || !space) return;
+    if (el.scrollTop > 120) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    const prevHeight = el.scrollHeight;
+    try {
+      const loaded = await loadOlderMessages(space.id);
+      // Prepending above the viewport shifts the content down; remember the
+      // old height so the effect below can compensate scrollTop by the delta.
+      if (loaded > 0) setPrependComp(prevHeight);
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  };
+
   const handleScroll = () => {
     const el = scrollContainerRef.current;
     if (!el) return;
@@ -838,6 +889,8 @@ export function ChatPanel({
     const isUp = distanceFromBottom > 150;
     nearBottomRef.current = distanceFromBottom < 80;
     setShowScrollBottom(isUp);
+    // Scroll-up pagination: reached the top -> pull the previous page.
+    if (el.scrollTop < 120 && !loadingOlderRef.current) void loadOlder();
   };
 
   const scrollToBottom = () => {
@@ -932,6 +985,29 @@ export function ChatPanel({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, space?.id]);
 
+  // Scroll-up pagination: keep the viewport anchored when older messages are
+  // prepended above it. Runs when either the new list or the pending height
+  // delta lands, so both update orders are handled.
+  useEffect(() => {
+    if (prependComp === null) return;
+    const el = scrollContainerRef.current;
+    if (el) el.scrollTop += el.scrollHeight - prependComp;
+    setPrependComp(null);
+  }, [messages, prependComp]);
+
+  // A list shorter than the viewport can't be scrolled to trigger pagination —
+  // keep pulling older pages until it overflows or history is exhausted.
+  const loadOlderRef = useRef(loadOlder);
+  loadOlderRef.current = loadOlder;
+  const spaceIdForOlder = space?.id;
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el || !spaceIdForOlder) return;
+    if (el.scrollHeight > el.clientHeight + 40) return;
+    if (loadingOlderRef.current) return;
+    void loadOlderRef.current();
+  }, [messages.length, spaceIdForOlder]);
+
   // Hooks must run before any early return (Rules of Hooks).
   const online = useOnline();
 
@@ -981,6 +1057,21 @@ export function ChatPanel({
     () => messages.filter((m) => starredIds.has(m.id)),
     [messages, starredIds],
   );
+
+  // Server-backed pin: the Space row carries pinned_message_id — resolve it
+  // against the loaded messages so pins set on other devices/members show too.
+  // The id-comparison keeps state identity stable across 10 s poll refreshes.
+  const pinnedId = space?.pinnedMessageId;
+  useEffect(() => {
+    if (!pinnedId) {
+      setPinnedMessage(null);
+      return;
+    }
+    setPinnedMessage((prev) => {
+      const found = messages.find((m) => m.id === pinnedId) ?? null;
+      return prev?.id === found?.id ? prev : found;
+    });
+  }, [pinnedId, messages]);
 
   if (!space) {
     return (
@@ -1098,16 +1189,19 @@ export function ChatPanel({
     }
 
     if (editing) {
-      // Preserve the original reply quote (Edit box shows body only), and
-      // re-attach the thread marker so the reply stays in its thread.
+      // Preserve the original reply quote (Edit box shows body only). New
+      // replies keep their relation in the reply_to column, which a text edit
+      // doesn't touch — only legacy messages whose relation lives in the text
+      // marker need it re-emitted alongside the edited body.
       const originalQuote =
         editing.text?.startsWith(QUOTE_PREFIX) && editing.text.includes("\n")
           ? editing.text.slice(0, editing.text.indexOf("\n"))
           : null;
       const bodyToSave = originalQuote ? `${originalQuote}\n${value}` : value;
-      const savedText = editing.threadParentId
-        ? `${bodyToSave}${THREAD_MARKER}${editing.threadParentId}`
-        : bodyToSave;
+      const savedText =
+        editing.threadFromMarker && editing.threadParentId
+          ? `${bodyToSave}${THREAD_MARKER}${editing.threadParentId}`
+          : bodyToSave;
       const updated = await editMessage(editing.id, space.id, savedText);
       if (updated) {
         setText("");
@@ -1118,12 +1212,15 @@ export function ChatPanel({
       }
       return;
     }
-    // Attach the reply quote as the first line (same wire format as before,
-    // now rendered as a styled quote block instead of raw text).
-    const outgoing = replyTo
-      ? `> Replying to @${replyTo.authorName || "User"}: "${replySnippet(replyTo)}"\n${value}`
-      : value;
-    const ok = await sendMessage({ spaceId: space.id, kind: "text", text: outgoing });
+    // The reply relation rides in the reply_to column — no more
+    // `> Replying to @...` prefix line in the text (legacy messages still
+    // render their old prefix through MessageBubble's quote fallback).
+    const ok = await sendMessage({
+      spaceId: space.id,
+      kind: "text",
+      text: value,
+      ...(replyTo && { replyToId: replyTo.id }),
+    });
     if (ok) {
       const queued = isOffline();
       setText("");
@@ -1671,7 +1768,7 @@ export function ChatPanel({
                         : "hover:bg-secondary text-muted-foreground")
                     }
                   >
-                    <span>{t === "off" ? "Off (Permanent)" : t}</span>
+                    <span>{t === "off" ? "Off (Default 7d)" : t}</span>
                     {disappearingTimer === t && <Check className="size-3" />}
                   </button>
                 ))}
@@ -2146,10 +2243,7 @@ export function ChatPanel({
           </div>
           <button
             type="button"
-            onClick={() => {
-              setPinnedMessage(null);
-              toast.info("Message unpinned");
-            }}
+            onClick={handleUnpin}
             className="rounded p-1 text-muted-foreground hover:text-foreground transition-colors"
           >
             <X className="size-3.5" />
@@ -2162,11 +2256,30 @@ export function ChatPanel({
         onScroll={handleScroll}
         className="thin-scroll relative flex-1 space-y-3 overflow-y-auto p-4"
       >
+        {loadingOlder && (
+          <p
+            role="status"
+            className="py-1.5 text-center text-[11px] font-medium text-muted-foreground"
+          >
+            Loading earlier messages…
+          </p>
+        )}
+        {syncError && (
+          <div
+            role="status"
+            className="flex items-center justify-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-center text-[11px] font-semibold text-amber-300"
+          >
+            <WifiOff className="size-3.5 shrink-0" />
+            Couldn&apos;t load messages — check your connection. Retrying…
+          </div>
+        )}
         {filteredMessages.length === 0 && (
           <p className="py-10 text-center text-xs text-muted-foreground">
             {searchQuery
               ? "No messages matching your search."
-              : "No messages yet — send text, images, video, voice notes or documents."}
+              : syncError
+                ? "Couldn't reach the server — your messages will appear as soon as the connection is back."
+                : "No messages yet — send text, images, video, voice notes or documents."}
           </p>
         )}
         {filteredMessages.map((m) => (
@@ -2180,13 +2293,13 @@ export function ChatPanel({
             onForward={onForward}
             onOpenImage={setLightbox}
             onPin={(message) => {
-              setPinnedMessage(message);
-              toast.success("Message pinned to top");
+              handlePin(message);
             }}
             onStar={toggleStar}
             onReply={handleReplyQuote}
             onOpenThread={(message) => setActiveThreadMessage(message)}
             isStarred={starredIds.has(m.id)}
+            onToggleReaction={(emoji) => handleToggleReaction(m, emoji)}
             onEdit={handleStartEdit}
             onDelete={(message) => {
               void handleDeleteForEveryone(message);
@@ -2776,9 +2889,8 @@ export function ChatPanel({
                     onForward={onForward}
                     onOpenImage={setLightbox}
                     onPin={(message) => {
-                      setPinnedMessage(message);
+                      handlePin(message);
                       setShowStarredModal(false);
-                      toast.success("Message pinned to top");
                     }}
                     onStar={toggleStar}
                     onReply={(message) => {
@@ -2787,6 +2899,7 @@ export function ChatPanel({
                       handleReplyQuote(message);
                     }}
                     isStarred={true}
+                    onToggleReaction={(emoji) => handleToggleReaction(m, emoji)}
                     onEdit={(message) => {
                       setShowStarredModal(false);
                       handleStartEdit(message);
@@ -3069,7 +3182,7 @@ export function ChatPanel({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                void handleSaveAttachment(lightbox, `space-connect-photo-${Date.now()}.jpg`);
+                void handleSaveAttachment(lightbox, `heymamaey-photo-${Date.now()}.jpg`);
               }}
               className="flex items-center gap-1.5 rounded-full bg-card px-4 py-2 text-xs font-semibold text-foreground shadow-xl hover:text-primary transition-colors"
             >
@@ -3170,7 +3283,7 @@ export function ChatPanel({
                     onPollVote={handlePollVote}
                     onForward={onForward}
                     onOpenImage={(url) => setLightbox(url)}
-                    onPin={() => setPinnedMessage(m)}
+                    onPin={() => handlePin(m)}
                     onStar={(msg) => toggleStar(msg)}
                     onReply={(msg) => {
                       // Replying from inside a thread targets the main composer,
@@ -3179,6 +3292,7 @@ export function ChatPanel({
                       handleReplyQuote(msg);
                     }}
                     isStarred={starredIds.has(m.id)}
+                    onToggleReaction={(emoji) => handleToggleReaction(m, emoji)}
                     onEdit={(msg) => {
                       setActiveThreadMessage(null);
                       handleStartEdit(msg);

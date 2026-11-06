@@ -1,8 +1,7 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
   Link,
-  createRootRouteWithContext,
+  createRootRoute,
   useRouter,
   HeadContent,
   Scripts,
@@ -70,18 +69,18 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
   );
 }
 
-export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+export const Route = createRootRoute({
   head: () => ({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Space Connect — Anonymous Chat & File Sharing" },
+      { title: "HeyMamaEy — Anonymous Chat & File Sharing" },
       { name: "description", content: "Anonymous code-based chat and file sharing." },
       { name: "theme-color", content: "#09090b" },
       { name: "apple-mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
-      { name: "apple-mobile-web-app-title", content: "Space Connect" },
-      { property: "og:title", content: "Space Connect" },
+      { name: "apple-mobile-web-app-title", content: "HeyMamaEy" },
+      { property: "og:title", content: "HeyMamaEy" },
       { property: "og:description", content: "Anonymous code-based chat and file sharing." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -120,8 +119,6 @@ function RootShell({ children }: { children: ReactNode }) {
 }
 
 function RootComponent() {
-  const { queryClient } = Route.useRouteContext();
-
   // Toaster must follow the active theme (was hard-coded to "dark").
   const [toastTheme, setToastTheme] = useState<"light" | "dark">(() =>
     typeof window === "undefined" ? "dark" : loadTheme() === "light" ? "light" : "dark",
@@ -173,10 +170,10 @@ function RootComponent() {
   }, []);
 
   return (
-    <QueryClientProvider client={queryClient}>
+    <>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <Outlet />
       <Toaster theme={toastTheme} />
-    </QueryClientProvider>
+    </>
   );
 }
