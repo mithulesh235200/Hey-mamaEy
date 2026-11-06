@@ -1,8 +1,8 @@
-# Developer Guidelines - Space Connect
+# Developer Guidelines - HeyMamaEy
 
 ## Overview
 
-Space Connect is a privacy-first, anonymous web application for real-time messaging and media sharing. Users communicate using anonymous IDs and space passcodes without needing phone numbers, email addresses, or passwords.
+HeyMamaEy is a privacy-first, anonymous web application for real-time messaging and media sharing. Users communicate using anonymous IDs and space passcodes without needing phone numbers, email addresses, or passwords.
 
 ## Architecture
 

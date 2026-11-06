@@ -1,6 +1,6 @@
-# Space Connect
+# HeyMamaEy
 
-Space Connect is a privacy-first web application designed for private, anonymous group messaging and media sharing without requiring phone numbers or email addresses.
+HeyMamaEy is a privacy-first web application designed for private, anonymous group messaging and media sharing without requiring phone numbers or email addresses.
 
 ## Features
 
@@ -37,8 +37,8 @@ Space Connect is a privacy-first web application designed for private, anonymous
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/space-connect.git
-cd space-connect
+git clone https://github.com/mithulesh235200/Hey-mamaEy.git
+cd Hey-mamaEy
 
 # Install dependencies
 npm install
