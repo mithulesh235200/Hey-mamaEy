@@ -286,6 +286,19 @@ export function ChatPanel({
   }, []);
   const [callMode, setCallMode] = useState<"voice" | "video" | null>(null);
   const [activeMembers, setActiveMembers] = useState<Array<{ userId: string; name: string }>>([]);
+  // Presence is authoritative for "am I alone?" — only trust it after the
+  // channel reports SUBSCRIBED so a busy room never flashes the solo tip.
+  const [membersReady, setMembersReady] = useState(false);
+  // Solo tip ("You're alone here"): per-space dismissals, stored by CODE so
+  // they survive reloads, re-joins and id churn.
+  const [soloTipDismissed, setSoloTipDismissed] = useState<string[]>(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem("heymamaey.soloTipHidden") || "[]");
+      return Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : [];
+    } catch {
+      return [];
+    }
+  });
   // Typing state keyed by userId (names can collide, e.g. two "Anonymous").
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
   const [showScrollBottom, setShowScrollBottom] = useState(false);
@@ -715,6 +728,7 @@ export function ChatPanel({
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           presenceSubscribedRef.current = true;
+          setMembersReady(true);
           await channel.track({ userId, name: presenceNameRef.current.trim() || "Anonymous" });
           updateMembers();
         }
@@ -729,6 +743,7 @@ export function ChatPanel({
       typingTimers.clear();
       presenceChannelRef.current = null;
       setActiveMembers([]);
+      setMembersReady(false);
       setTypingUsers(new Map());
     };
   }, [spaceCode, userId]);
@@ -945,6 +960,53 @@ export function ChatPanel({
       toast.error("Couldn't copy invite link");
     }
   };
+
+  const dismissSoloTip = () => {
+    if (!space?.code) return;
+    const next = [...new Set([...soloTipDismissed, space.code])];
+    setSoloTipDismissed(next);
+    try {
+      localStorage.setItem("heymamaey.soloTipHidden", JSON.stringify(next));
+    } catch {
+      /* storage denied — the tip may return next visit */
+    }
+  };
+
+  // One-time nudge per space: the first time presence confirms you are truly
+  // alone in a room, offer the invite link from a toast as well (persisted
+  // per space CODE, so it never re-toasts on later visits). Declared before
+  // the `if (!space)` early return below so the hook order never changes.
+  useEffect(() => {
+    const aloneNow =
+      Boolean(spaceCode) && membersReady && activeMembers.every((m) => m.userId === userId);
+    if (!aloneNow || !spaceCode) return;
+    let seen: string[] = [];
+    try {
+      const parsed = JSON.parse(localStorage.getItem("heymamaey.soloTipToastSeen") || "[]");
+      seen = Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : [];
+    } catch {
+      seen = [];
+    }
+    if (seen.includes(spaceCode)) return;
+    try {
+      localStorage.setItem("heymamaey.soloTipToastSeen", JSON.stringify([...seen, spaceCode]));
+    } catch {
+      /* storage denied — worst case: the toast repeats */
+    }
+    toast.info("You're alone in here so far", {
+      description: "Share the invite link so someone can join this room.",
+      action: {
+        label: "Copy invite",
+        onClick: () => {
+          const value = inviteUrl || spaceCode;
+          navigator.clipboard
+            .writeText(value)
+            .then(() => toast.success(inviteUrl ? "Invite link copied!" : "Space code copied!"))
+            .catch(() => toast.error("Couldn't copy invite link"));
+        },
+      },
+    });
+  }, [membersReady, activeMembers, spaceCode, userId, inviteUrl]);
 
   const confirmDeleteSpace = async () => {
     if (!space || deletingSpace) return;
@@ -1559,6 +1621,10 @@ export function ChatPanel({
   const typingArray = typingIndicatorsEnabled ? [...typingUsers.values()] : [];
   const otherMembers = activeMembers.filter((m) => m.userId !== userId);
   const otherMemberNames = [...new Set(otherMembers.map((m) => m.name))];
+
+  // Abandonment guard: alone in a room nobody else has joined yet.
+  const aloneInSpace = Boolean(spaceCode) && membersReady && otherMemberNames.length === 0;
+  const showSoloTip = aloneInSpace && !searchQuery && !soloTipDismissed.includes(spaceCode ?? "");
 
   const getWallpaperStyle = () => {
     if (wallpaper === "dots") {
@@ -2271,6 +2337,50 @@ export function ChatPanel({
           >
             <WifiOff className="size-3.5 shrink-0" />
             Couldn&apos;t load messages — check your connection. Retrying…
+          </div>
+        )}
+        {showSoloTip && space && (
+          <div className="rounded-2xl border border-primary/30 bg-card/70 p-4 shadow-sm backdrop-blur-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-foreground">You&apos;re alone here</p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  Only you have this code so far — the room is private. Try it out, then share the
+                  invite:
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={dismissSoloTip}
+                aria-label="Dismiss solo tip"
+                className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+            <ul className="mt-2.5 space-y-1 text-[11px] text-muted-foreground">
+              <li>📎 Send a photo, video or document</li>
+              <li>🎤 Record a voice note (hold the mic)</li>
+              <li>⏱ Turn on disappearing messages</li>
+            </ul>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void copyInviteLink()}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-primary-foreground shadow-sm transition-transform hover:scale-102"
+              >
+                <Copy className="size-3.5" />
+                {copiedInvite ? "Copied!" : "Copy invite link"}
+              </button>
+              <button
+                type="button"
+                onClick={shareSpace}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-card px-3 py-2 text-xs font-semibold text-foreground ring-1 ring-border transition-colors hover:bg-secondary"
+              >
+                <Share2 className="size-3.5" />
+                Share
+              </button>
+            </div>
           </div>
         )}
         {filteredMessages.length === 0 && (

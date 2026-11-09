@@ -22,6 +22,7 @@ import {
   markSpaceAsRead,
   setActiveSpace,
   setDisplayName,
+  useChatState,
   type Message,
   type Space,
 } from "@/lib/heymama";
@@ -70,13 +71,20 @@ export function MobileHome({
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<"create" | "join" | null>(null);
 
+  // MY ROOMS parity on mobile: pinned rooms float to the top of the list
+  // (stable sort keeps the normal recent order within each group).
+  const pinnedCodes = useChatState().pinnedCodes;
+  const pinnedSet = useMemo(() => new Set(pinnedCodes), [pinnedCodes]);
+
   const filteredSpaces = useMemo(() => {
     const value = query.trim().toLocaleLowerCase();
-    if (!value) return spaces;
-    return spaces.filter((space) =>
-      `${space.name} ${space.code}`.toLocaleLowerCase().includes(value),
+    const matches = value
+      ? spaces.filter((space) => `${space.name} ${space.code}`.toLocaleLowerCase().includes(value))
+      : spaces;
+    return [...matches].sort(
+      (a, b) => Number(pinnedSet.has(b.code)) - Number(pinnedSet.has(a.code)),
     );
-  }, [query, spaces]);
+  }, [query, spaces, pinnedSet]);
 
   const saveName = () => {
     const value = editingName.trim();
@@ -405,6 +413,7 @@ export function MobileHome({
                         <span className="min-w-0 flex-1 text-left">
                           <span className="flex min-w-0 items-center gap-2">
                             <span className="min-w-0 flex-1 truncate text-sm font-semibold">
+                              {pinnedSet.has(space.code) ? "📌 " : ""}
                               {space.name}
                             </span>
                             <span className="shrink-0 text-[11px] font-mono text-primary">

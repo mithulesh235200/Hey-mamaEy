@@ -75,6 +75,9 @@ export type Space = {
   retention?: SpaceRetention;
 };
 
+/** A locally remembered room entry (MY ROOMS recents — codes, not ids). */
+export type SpaceRecent = { code: string; at: number };
+
 export type State = {
   userId: string;
   displayName: string;
@@ -84,6 +87,10 @@ export type State = {
   typingMap: Record<string, Record<string, string>>; // spaceId -> { userId: userName }
   readTimestamps: Record<string, number>; // spaceId -> lastReadTime
   hiddenMessageIds: string[]; // message IDs the user deleted for themselves only
+  /** MY ROOMS bookmarks, as space CODES (survive id churn + re-joins). */
+  pinnedCodes: string[];
+  /** Recently opened spaces, newest first (codes, capped locally). */
+  recents: SpaceRecent[];
   ready: boolean;
   /** True when the last message sync failed (network/RPC) — drives the retry banner. */
   syncError: boolean;
@@ -94,7 +101,12 @@ const READ_KEY = "heymamaey.readTimestamps.v1";
 const HIDDEN_KEY = "heymamaey.hiddenForMe.v1";
 const OFFLINE_SNAPSHOT_KEY = "heymamaey.offlineCache.v1";
 const OUTBOX_KEY = "heymamaey.outbox.v1";
+// Re-entry keys (all local, all by CODE so they survive id churn).
+const LAST_SPACE_KEY = "heymamaey.lastSpace";
+const RECENT_SPACES_KEY = "heymamaey.recentSpaces";
+const SPACE_PINS_KEY = "heymamaey.spacePins";
 const MAX_SNAPSHOT_MESSAGES = 300;
+const MAX_RECENT_SPACES = 8;
 const MAX_OUTBOX_ENTRIES = 50;
 
 /** True when the browser reports no network (web + installed PWA + WebView). */
@@ -178,8 +190,154 @@ function restoreOfflineSnapshot(): boolean {
   set({
     spaces: snapshot.spaces,
     messages: filterRetained(snapshot.messages, snapshot.spaces),
+    // Offline start still lands the user back in their last-opened room.
+    activeSpaceId: resolveActiveSpaceId(snapshot.spaces),
   });
   return true;
+}
+
+/* ---------- MY ROOMS: pins, recents & last-opened space (all local) ---------- */
+
+function loadStringList(key: string): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((v): v is string => typeof v === "string");
+  } catch {
+    return [];
+  }
+}
+
+function saveStringList(key: string, values: string[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(values));
+  } catch {
+    /* storage full/denied — MY ROOMS is best-effort */
+  }
+}
+
+function loadPinnedCodes(): string[] {
+  return loadStringList(SPACE_PINS_KEY);
+}
+
+function loadRecents(): SpaceRecent[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(RECENT_SPACES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const seen = new Set<string>();
+    const out: SpaceRecent[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
+      const { code, at } = item as Partial<SpaceRecent>;
+      if (typeof code !== "string" || !code || seen.has(code)) continue;
+      seen.add(code);
+      out.push({ code, at: typeof at === "number" ? at : 0 });
+      if (out.length >= MAX_RECENT_SPACES) break;
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function saveRecents(list: SpaceRecent[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      RECENT_SPACES_KEY,
+      JSON.stringify(list.slice(0, MAX_RECENT_SPACES)),
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
+function loadLastSpaceCode(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(LAST_SPACE_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveLastSpaceCode(code: string | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (code) window.localStorage.setItem(LAST_SPACE_KEY, code);
+    else window.localStorage.removeItem(LAST_SPACE_KEY);
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * Mark a space as freshly opened: push it to the head of recents (capped) and
+ * remember it as the space to restore on the next launch. Called by every
+ * path that makes a space active (tap, create, join, deep link).
+ */
+function markSpaceActive(code: string) {
+  if (!code) return;
+  const next = [{ code, at: Date.now() }, ...state.recents.filter((r) => r.code !== code)].slice(
+    0,
+    MAX_RECENT_SPACES,
+  );
+  set({ recents: next });
+  saveRecents(next);
+  saveLastSpaceCode(code);
+}
+
+/** Drop a left/killed space from pins, recents and the last-opened key. */
+function forgetSpaceCode(code: string) {
+  if (!code) return;
+  if (state.pinnedCodes.includes(code)) {
+    const pins = state.pinnedCodes.filter((c) => c !== code);
+    set({ pinnedCodes: pins });
+    saveStringList(SPACE_PINS_KEY, pins);
+  }
+  if (state.recents.some((r) => r.code === code)) {
+    const recents = state.recents.filter((r) => r.code !== code);
+    set({ recents });
+    saveRecents(recents);
+  }
+  if (loadLastSpaceCode() === code) saveLastSpaceCode(null);
+}
+
+/**
+ * Resolve which space a freshly-loaded list should open:
+ *   1. the current selection, when it is still in the list;
+ *   2. else the last space the user opened (`heymamaey.lastSpace`, stored as a
+ *      CODE so it survives id churn and re-joins);
+ *   3. else null (nothing open).
+ *
+ * NOTE: rule 2 is a deliberate, product-approved override of the old
+ * "Never auto-open a Space on app launch" rule — reopening the app now lands
+ * you back in the room you left. An explicit `?space=` deep-link join still
+ * wins because hydrate() runs it AFTER loadSpaces().
+ */
+function resolveActiveSpaceId(spaces: Space[]): string | null {
+  if (state.activeSpaceId && spaces.some((s) => s.id === state.activeSpaceId)) {
+    return state.activeSpaceId;
+  }
+  const lastCode = loadLastSpaceCode();
+  if (!lastCode) return null;
+  return spaces.find((s) => s.code === lastCode)?.id ?? null;
+}
+
+/** Pin/unpin a space in MY ROOMS. Returns true when it is pinned afterwards. */
+export function togglePin(code: string): boolean {
+  const pinned = state.pinnedCodes.includes(code);
+  const next = pinned ? state.pinnedCodes.filter((c) => c !== code) : [...state.pinnedCodes, code];
+  set({ pinnedCodes: next });
+  saveStringList(SPACE_PINS_KEY, next);
+  return !pinned;
 }
 
 /* ---------- offline outbox (queue text while offline, flush on reconnect) ---------- */
@@ -321,6 +479,8 @@ const initialState: State = {
   typingMap: {},
   readTimestamps: {},
   hiddenMessageIds: [],
+  pinnedCodes: [],
+  recents: [],
   ready: false,
   syncError: false,
 };
@@ -1144,6 +1304,8 @@ async function loadSpaces() {
       prefs.codes = prefs.codes.filter((c) => !deadCodes.includes(c));
       savePrefs();
       for (const c of deadCodes) {
+        // MY ROOMS must not keep entries for rooms we were kicked out of.
+        forgetSpaceCode(c);
         try {
           clearRoomPassword(c);
         } catch {
@@ -1151,7 +1313,6 @@ async function loadSpaces() {
         }
       }
     }
-    const ids = spaces.map((s) => s.id);
     const messageLists = await Promise.all(
       spaces.map((s) =>
         fetchMessages(s.code).catch((e) => {
@@ -1175,10 +1336,10 @@ async function loadSpaces() {
     set({
       spaces,
       messages: validMessages,
-      // Never auto-open a Space on app launch. The user must tap a Space.
-      // Only keep the current selection if it is still valid.
-      activeSpaceId:
-        state.activeSpaceId && ids.includes(state.activeSpaceId) ? state.activeSpaceId : null,
+      // Keep the current selection when it is still valid; otherwise reopen
+      // the last space the user was in (by code). See resolveActiveSpaceId()
+      // for why this intentionally overrides the old "never auto-open" rule.
+      activeSpaceId: resolveActiveSpaceId(spaces),
     });
     persistOfflineSnapshot();
     void flushOutbox();
@@ -1284,6 +1445,8 @@ export function hydrate() {
       displayName: prefs.displayName,
       readTimestamps: loadReadTimestamps(),
       hiddenMessageIds: loadHiddenIds(),
+      pinnedCodes: loadPinnedCodes(),
+      recents: loadRecents(),
       ready: true,
     });
     // Show the last saved chats instantly so the app opens offline; the
@@ -1425,6 +1588,7 @@ export async function createSpace(
   rememberCode(space.code);
   void registerMembership(space.code, state.userId);
   set({ spaces: [space, ...state.spaces], activeSpaceId: space.id });
+  markSpaceActive(space.code);
   persistOfflineSnapshot();
   return space;
 }
@@ -1442,6 +1606,7 @@ export async function joinSpace(rawCode: string, password = ""): Promise<Space |
   const mustFetch = !local || local.id.startsWith("locked-") || Boolean(password.trim());
   if (local && !mustFetch) {
     set({ activeSpaceId: local.id });
+    markSpaceActive(local.code);
     void registerMembership(local.code, state.userId);
     // Re-decrypt history now that a password may have been supplied.
     void refreshActiveSpace();
@@ -1475,6 +1640,7 @@ export async function joinSpace(rawCode: string, password = ""): Promise<Space |
     messages: [...state.messages, ...history.filter((m) => !existingIds.has(m.id))],
     activeSpaceId: space.id,
   });
+  markSpaceActive(space.code);
   persistOfflineSnapshot();
   return space;
 }
@@ -1647,6 +1813,8 @@ export function leaveSpace(spaceId: string): boolean {
   if (space) {
     prefs.codes = prefs.codes.filter((c) => c !== space.code);
     savePrefs();
+    // Leaving drops the room from MY ROOMS, recents and the restore key.
+    forgetSpaceCode(space.code);
     try {
       clearRoomPassword(space.code);
     } catch {
@@ -1678,6 +1846,8 @@ export async function deleteSpaceForEveryone(spaceId: string): Promise<boolean> 
 
 export function setActiveSpace(spaceId: string | null) {
   set({ activeSpaceId: spaceId });
+  const space = spaceId ? state.spaces.find((s) => s.id === spaceId) : null;
+  if (space) markSpaceActive(space.code);
 }
 
 async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" | "authorName">) {
@@ -2255,6 +2425,11 @@ function wipeStoredIdentity() {
     window.localStorage.removeItem(PREFS_KEY);
     window.localStorage.removeItem(READ_KEY);
     window.localStorage.removeItem(HIDDEN_KEY);
+    // MY ROOMS is identity-scoped: a fresh/shared-device identity must not
+    // inherit the previous user's pins, recents or restore target.
+    window.localStorage.removeItem(SPACE_PINS_KEY);
+    window.localStorage.removeItem(RECENT_SPACES_KEY);
+    window.localStorage.removeItem(LAST_SPACE_KEY);
   } catch {
     /* ignore */
   }
@@ -2284,6 +2459,8 @@ export function forgetIdentity() {
     typingMap: {},
     readTimestamps: {},
     hiddenMessageIds: [],
+    pinnedCodes: [],
+    recents: [],
   });
 }
 

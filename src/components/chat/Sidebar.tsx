@@ -4,6 +4,7 @@ import {
   Hash,
   LogOut,
   Palette,
+  Pin,
   Plus,
   RefreshCw,
   Smile,
@@ -22,6 +23,7 @@ import {
   setDisplayName,
   setActiveSpace,
   signInWithId,
+  togglePin,
   useChatState,
   getUnreadCount,
   markSpaceAsRead,
@@ -233,6 +235,108 @@ export function Sidebar({
     if (last.kind === "location") return "📍 Location shared";
     if (last.kind === "p2p_file") return "⚡ P2P file shared";
     return `${last.kind === "file" ? "Document" : last.kind} shared`;
+  };
+
+  // MY ROOMS: pinned rooms first, then the most recently opened ones. Both
+  // lists live in localStorage keyed by space CODE, so they survive reloads,
+  // tab closes and even a cleared spaces list (the code is a re-join handle).
+  const pinnedSet = new Set(chatState.pinnedCodes);
+  const pinnedSpaces = spaces.filter((s) => pinnedSet.has(s.code));
+  const shownCodes = new Set(pinnedSpaces.map((s) => s.code));
+  const recentSpaces: Space[] = [];
+  for (const recent of chatState.recents) {
+    if (recentSpaces.length >= 5) break;
+    if (shownCodes.has(recent.code)) continue;
+    const match = spaces.find((s) => s.code === recent.code);
+    if (!match) continue;
+    recentSpaces.push(match);
+    shownCodes.add(match.code);
+  }
+  const otherSpaces = spaces.filter((s) => !shownCodes.has(s.code));
+
+  const handleTogglePin = (s: Space) => {
+    const pinned = togglePin(s.code);
+    toast.success(pinned ? `Pinned “${s.name}” to My Rooms` : `Unpinned “${s.name}”`);
+  };
+
+  const renderSpaceRow = (s: Space) => {
+    const unread = getUnreadCount(s.id, messages, userId, chatState.readTimestamps);
+    const pinned = pinnedSet.has(s.code);
+
+    return (
+      <div
+        key={s.id}
+        className={
+          "group mb-1 flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors " +
+          (s.id === activeSpaceId
+            ? "bg-primary/10 text-foreground glow-ring"
+            : "text-muted-foreground hover:bg-card hover:text-foreground")
+        }
+      >
+        <button
+          type="button"
+          onClick={() => {
+            setActiveSpace(s.id);
+            markSpaceAsRead(s.id);
+            onNavigate?.();
+          }}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        >
+          <div
+            className={
+              "flex size-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold transition-colors " +
+              (s.id === activeSpaceId
+                ? "bg-primary text-primary-foreground"
+                : "bg-card text-muted-foreground group-hover:text-foreground")
+            }
+          >
+            <Hash className="size-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center justify-between gap-1">
+              <p className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">
+                {s.name}
+              </p>
+              <span className="shrink-0 font-mono text-[10px] text-primary">
+                {`${s.hasPassword ? "🔒 " : ""}${s.isLocked ? "🚫 " : ""}${s.isReadonly ? "📖 " : ""}${s.code}`}
+              </span>
+            </div>
+            <p className="truncate text-[11px] text-muted-foreground">{lastOf(s.id)}</p>
+          </div>
+          {unread > 0 && (
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary font-mono text-[10px] font-bold text-primary-foreground shadow-sm">
+              {unread > 99 ? "99+" : unread}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleTogglePin(s)}
+          aria-label={pinned ? `Unpin ${s.name}` : `Pin ${s.name}`}
+          title={pinned ? "Unpin from My Rooms" : "Pin to My Rooms"}
+          className={
+            "inline-flex min-h-9 min-w-9 items-center justify-center rounded-lg p-1.5 transition-opacity focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 " +
+            (pinned
+              ? "text-primary opacity-100 hover:bg-primary/10"
+              : "text-muted-foreground hover:bg-card hover:text-foreground")
+          }
+        >
+          <Pin className={"size-3.5 " + (pinned ? "fill-current" : "")} />
+        </button>
+        <button
+          type="button"
+          onClick={async () => {
+            if (!window.confirm(`Leave "${s.name}"?`)) return;
+            const ok = await leaveSpace(s.id);
+            toast[ok ? "success" : "error"](ok ? `Left ${s.name}` : "Couldn't leave Space");
+          }}
+          aria-label={`Leave ${s.name}`}
+          className="opacity-100 focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 rounded-lg p-1.5 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive min-h-9 min-w-9 inline-flex items-center justify-center"
+        >
+          <LogOut className="size-3.5" />
+        </button>
+      </div>
+    );
   };
 
   return (
@@ -545,70 +649,15 @@ export function Sidebar({
             No Spaces yet. Create one or join with a Space Number.
           </p>
         )}
-        {spaces.map((s) => {
-          const unread = getUnreadCount(s.id, messages, userId, chatState.readTimestamps);
-
-          return (
-            <div
-              key={s.id}
-              className={
-                "group mb-1 flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors " +
-                (s.id === activeSpaceId
-                  ? "bg-primary/10 text-foreground glow-ring"
-                  : "text-muted-foreground hover:bg-card hover:text-foreground")
-              }
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveSpace(s.id);
-                  markSpaceAsRead(s.id);
-                  onNavigate?.();
-                }}
-                className="flex min-w-0 flex-1 items-center gap-3 text-left"
-              >
-                <div
-                  className={
-                    "flex size-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold transition-colors " +
-                    (s.id === activeSpaceId
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-card text-muted-foreground group-hover:text-foreground")
-                  }
-                >
-                  <Hash className="size-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex min-w-0 items-center justify-between gap-1">
-                    <p className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">
-                      {s.name}
-                    </p>
-                    <span className="shrink-0 font-mono text-[10px] text-primary">
-                      {`${s.hasPassword ? "🔒 " : ""}${s.isLocked ? "🚫 " : ""}${s.isReadonly ? "📖 " : ""}${s.code}`}
-                    </span>
-                  </div>
-                  <p className="truncate text-[11px] text-muted-foreground">{lastOf(s.id)}</p>
-                </div>
-                {unread > 0 && (
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary font-mono text-[10px] font-bold text-primary-foreground shadow-sm">
-                    {unread > 99 ? "99+" : unread}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!window.confirm(`Leave "${s.name}"?`)) return;
-                  const ok = await leaveSpace(s.id);
-                  toast[ok ? "success" : "error"](ok ? `Left ${s.name}` : "Couldn't leave Space");
-                }}
-                aria-label={`Leave ${s.name}`}
-                className="opacity-100 focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 rounded-lg p-1.5 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive min-h-9 min-w-9 inline-flex items-center justify-center"
-              >
-                <LogOut className="size-3.5" />
-              </button>
-            </div>
-          );
-        })}
+        {(pinnedSpaces.length > 0 || recentSpaces.length > 0) && (
+          <div className="mb-2">
+            <p className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              My Rooms
+            </p>
+            {[...pinnedSpaces, ...recentSpaces].map(renderSpaceRow)}
+          </div>
+        )}
+        {otherSpaces.map(renderSpaceRow)}
       </div>
     </aside>
   );
