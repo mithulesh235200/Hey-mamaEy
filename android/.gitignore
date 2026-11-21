@@ -62,7 +62,9 @@ captures/
 .cxx/
 
 # Google Services (e.g. APIs or Firebase)
-# google-services.json
+# Kept out of git: contains the Firebase API key/client id. Drop your own
+# google-services.json here to build the APK (see ANDROID.md).
+google-services.json
 
 # Freeline
 freeline.py
