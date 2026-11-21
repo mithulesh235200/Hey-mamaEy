@@ -1,9 +1,13 @@
 // Supabase Edge Function: invite-friend
 // Body: { target_user_id, from_user_id, from_name, space_code, space_name }
-// Delivers a chat invite to a friend's devices via FCM, addressed by their
-// Unique Identity Code (no space link needed on their side).
-// Env secrets (supabase secrets set): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
-// FCM_PROJECT_ID, FCM_SERVICE_ACCOUNT (full service-account JSON).
+// Delivers a chat invite to a friend's devices, addressed by their Unique
+// Identity Code (no space link needed on their side).
+// Transports (both optional — each covers the tokens it is configured for):
+//   Web Push (PWA / desktop / Android-installed web app): VAPID_PUBLIC_KEY,
+//     VAPID_PRIVATE_KEY — fans out to push_tokens rows with platform='web'.
+//   Android/iOS native: FCM_PROJECT_ID, FCM_SERVICE_ACCOUNT (service-account
+//     JSON) — fans out to rows with any other platform value.
+// Env secrets (supabase secrets set): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 //
 // Deploy: supabase functions deploy invite-friend
 
@@ -85,6 +89,28 @@ const cleanId = (v: unknown): string => {
   return s;
 };
 
+type TokenRow = { token: string; platform: string | null };
+
+/** Deletes a push token row whose endpoint is dead (404/410). Best-effort. */
+async function dropStaleToken(
+  supabaseUrl: string,
+  serviceKey: string,
+  userId: string,
+  row: TokenRow,
+): Promise<void> {
+  try {
+    await fetch(
+      `${supabaseUrl}/rest/v1/push_tokens?user_id=eq.${encodeURIComponent(userId)}&token=eq.${encodeURIComponent(row.token)}`,
+      {
+        method: "DELETE",
+        headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+      },
+    );
+  } catch {
+    /* next invite retries */
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
@@ -92,11 +118,19 @@ Deno.serve(async (req: Request) => {
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     const PROJECT_ID = Deno.env.get("FCM_PROJECT_ID") || "";
     const SA_JSON = Deno.env.get("FCM_SERVICE_ACCOUNT") || "";
+    const VAPID_PUBLIC = Deno.env.get("VAPID_PUBLIC_KEY") || "";
+    const VAPID_PRIVATE = Deno.env.get("VAPID_PRIVATE_KEY") || "";
     if (!SUPABASE_URL || !SERVICE_KEY) {
       return json({ error: "Missing Supabase credentials" }, 500);
     }
 
     const hasFcm = Boolean(PROJECT_ID && SA_JSON);
+    const hasWeb = Boolean(VAPID_PUBLIC && VAPID_PRIVATE);
+    if (!hasFcm && !hasWeb) {
+      // No transport configured: report an honest no-op instead of failing.
+      console.error("No push transport configured: set VAPID_* and/or FCM_* secrets");
+      return json({ sent: 0, fcm: 0, web: 0 });
+    }
 
     const body = (await req.json()) as Record<string, unknown>;
     const target = cleanId(body.target_user_id);
@@ -119,41 +153,107 @@ Deno.serve(async (req: Request) => {
 
     // Tokens for the target identity (service role bypasses RLS).
     const tokRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/push_tokens?user_id=eq.${encodeURIComponent(target)}&select=token`,
+      `${SUPABASE_URL}/rest/v1/push_tokens?user_id=eq.${encodeURIComponent(target)}&select=token,platform`,
       { headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` } },
     );
     if (!tokRes.ok) return json({ error: "Token lookup failed" }, 502);
-    const tokens = (await tokRes.json()) as { token: string }[];
-    if (!Array.isArray(tokens) || tokens.length === 0 || !hasFcm) {
-      return json({ sent: 0 });
+    const tokens = (await tokRes.json()) as TokenRow[];
+    if (!Array.isArray(tokens) || tokens.length === 0) {
+      return json({ sent: 0, fcm: 0, web: 0 });
     }
 
-    const sa = JSON.parse(SA_JSON) as { client_email: string; private_key: string };
-    const accessToken = await fcmAccessToken(sa.client_email, sa.private_key);
+    // Route every token to the transport that can actually deliver to it —
+    // web subscriptions are JSON endpoint objects and must never hit FCM.
+    const nativeTokens = tokens.filter((t) => (t.platform ?? "android") !== "web");
+    const webTokens = tokens.filter((t) => t.platform === "web");
 
     const title = `💌 ${fromName} invited you to chat`;
     const note = `Tap to join ${spaceName}`;
-    const results = await Promise.allSettled(
-      tokens.slice(0, 10).map((t) =>
-        fetch(`https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            message: {
-              token: t.token,
-              notification: { title, body: note },
-              data: { space_code: spaceCode, invite_from: fromId, invite_name: fromName },
-              android: { priority: "high" },
-            },
+    const dataPayload = {
+      space_code: spaceCode,
+      invite_from: fromId,
+      invite_name: fromName,
+    };
+
+    // ---- FCM (android / ios native tokens) ----
+    let fcmSent = 0;
+    if (hasFcm && nativeTokens.length > 0) {
+      try {
+        const sa = JSON.parse(SA_JSON) as { client_email: string; private_key: string };
+        const accessToken = await fcmAccessToken(sa.client_email, sa.private_key);
+        const results = await Promise.allSettled(
+          nativeTokens.slice(0, 10).map((t) =>
+            fetch(`https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                message: {
+                  token: t.token,
+                  notification: { title, body: note },
+                  data: dataPayload,
+                  android: { priority: "high" },
+                },
+              }),
+            }),
+          ),
+        );
+        fcmSent = results.filter((r) => r.status === "fulfilled" && r.value.ok).length;
+      } catch {
+        /* FCM down/misconfigured — web push below still runs */
+      }
+    }
+
+    // ---- Web Push (PWA / installed web app, incl. Android browsers) ----
+    let webSent = 0;
+    if (hasWeb && webTokens.length > 0) {
+      try {
+        const webpush = await import("npm:web-push");
+        const vapidDetails = {
+          subject: "mailto:hello@heymamaey.app",
+          publicKey: VAPID_PUBLIC,
+          privateKey: VAPID_PRIVATE,
+        };
+        const payload = JSON.stringify({ title, body: note, ...dataPayload });
+        const results = await Promise.allSettled(
+          webTokens.slice(0, 25).map(async (t): Promise<boolean> => {
+            let subscription: PushSubscriptionJSON;
+            try {
+              subscription = JSON.parse(t.token) as PushSubscriptionJSON;
+            } catch {
+              await dropStaleToken(SUPABASE_URL, SERVICE_KEY, target, t);
+              return false;
+            }
+            if (!subscription?.endpoint) {
+              await dropStaleToken(SUPABASE_URL, SERVICE_KEY, target, t);
+              return false;
+            }
+            try {
+              await webpush.sendNotification(subscription, payload, {
+                vapidDetails,
+                TTL: 60 * 60 * 24,
+                headers: {},
+              });
+              return true;
+            } catch (e) {
+              // 404/410 = endpoint gone (browser reset the subscription).
+              const status = (e as { statusCode?: number }).statusCode;
+              if (status === 404 || status === 410) {
+                await dropStaleToken(SUPABASE_URL, SERVICE_KEY, target, t);
+              }
+              return false;
+            }
           }),
-        }),
-      ),
-    );
-    const sent = results.filter((r) => r.status === "fulfilled" && r.value.ok).length;
-    return json({ sent });
+        );
+        webSent = results.filter((r) => r.status === "fulfilled" && r.value === true).length;
+      } catch {
+        /* web-push unavailable — FCM above still ran */
+      }
+    }
+
+    return json({ sent: fcmSent + webSent, fcm: fcmSent, web: webSent });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : "unknown" }, 500);
   }

@@ -103,7 +103,13 @@ export const Route = createRootRoute({
 
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className="dark">
+    // suppressHydrationWarning: the theme boot script below legitimately
+    // writes data-theme + accent CSS vars onto <html> before first paint, so
+    // the hydrated DOM always carries attributes SSR could not know about
+    // (localStorage is server-invisible). React would otherwise log a
+    // hydration-mismatch warning on every load. Only <html>'s own attributes
+    // are silenced — the subtree still hydrates strictly.
+    <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         <HeadContent />
         {/* Applies the saved theme/accent before first paint so non-dark
