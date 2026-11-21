@@ -196,6 +196,32 @@ function restoreOfflineSnapshot(): boolean {
   return true;
 }
 
+/**
+ * Remove spaces (by code) from the persisted offline cache. Called when the
+ * server rejects a room (kicked/deleted) so a stale snapshot can never
+ * resurrect it on the next start — especially the offline fallback, which
+ * would otherwise bring a banned room straight back.
+ */
+function purgeSnapshotCodes(codes: string[]) {
+  if (typeof window === "undefined" || codes.length === 0) return;
+  try {
+    const snapshot = loadOfflineSnapshot();
+    if (!snapshot) return;
+    const deadIds = new Set(snapshot.spaces.filter((s) => codes.includes(s.code)).map((s) => s.id));
+    if (deadIds.size === 0) return;
+    window.localStorage.setItem(
+      OFFLINE_SNAPSHOT_KEY,
+      JSON.stringify({
+        spaces: snapshot.spaces.filter((s) => !deadIds.has(s.id)),
+        messages: snapshot.messages.filter((m) => !deadIds.has(m.spaceId)),
+        savedAt: Date.now(),
+      } satisfies OfflineSnapshot),
+    );
+  } catch {
+    /* storage full/denied — snapshot purge is best-effort */
+  }
+}
+
 /* ---------- MY ROOMS: pins, recents & last-opened space (all local) ---------- */
 
 function loadStringList(key: string): string[] {
@@ -308,6 +334,34 @@ function forgetSpaceCode(code: string) {
     saveRecents(recents);
   }
   if (loadLastSpaceCode() === code) saveLastSpaceCode(null);
+}
+
+/**
+ * The server said we were removed from this room (SPACE_USER_BANNED):
+ * forget it everywhere on this device — prefs, MY ROOMS, passwords, the
+ * offline cache and live state — so it disappears immediately instead of
+ * waiting for the next full sync (or resurrecting from the snapshot).
+ */
+function dropBannedSpace(code: string) {
+  if (!code) return;
+  prefs.codes = prefs.codes.filter((c) => c !== code);
+  savePrefs();
+  forgetSpaceCode(code);
+  try {
+    clearRoomPassword(code);
+  } catch {
+    /* ignore */
+  }
+  purgeSnapshotCodes([code]);
+  const deadIds = new Set(state.spaces.filter((s) => s.code === code).map((s) => s.id));
+  if (deadIds.size === 0) return;
+  set({
+    spaces: state.spaces.filter((s) => s.code !== code),
+    messages: state.messages.filter((m) => !deadIds.has(m.spaceId)),
+    activeSpaceId:
+      state.activeSpaceId && deadIds.has(state.activeSpaceId) ? null : state.activeSpaceId,
+  });
+  persistOfflineSnapshot();
 }
 
 /**
@@ -1261,6 +1315,10 @@ async function loadSpaces() {
         hasPassword: true,
       };
     };
+    // Codes the server explicitly rejected as banned (kicked). These are
+    // forgotten unconditionally — even a locally password-gated copy must
+    // not survive a kick.
+    const bannedCodes = new Set<string>();
     const results = await Promise.all(
       prefs.codes.map(async (code) => {
         try {
@@ -1279,6 +1337,7 @@ async function loadSpaces() {
         } catch (e) {
           // Kicked users lose the room: drop it from this device for good.
           if (e instanceof Error && e.message.includes("SPACE_USER_BANNED")) {
+            bannedCodes.add(code);
             return null;
           }
           // Password-gated rooms stay listed locally; user can unlock or leave.
@@ -1298,7 +1357,8 @@ async function loadSpaces() {
     const liveCodes = new Set(spaces.map((s) => s.code));
     const deadCodes = prefs.codes.filter(
       (c) =>
-        !liveCodes.has(c) && !prevByCode.get(c)?.hasPassword && !snapByCode.get(c)?.hasPassword,
+        bannedCodes.has(c) ||
+        (!liveCodes.has(c) && !prevByCode.get(c)?.hasPassword && !snapByCode.get(c)?.hasPassword),
     );
     if (deadCodes.length > 0) {
       prefs.codes = prefs.codes.filter((c) => !deadCodes.includes(c));
@@ -1312,6 +1372,9 @@ async function loadSpaces() {
           /* ignore */
         }
       }
+      // The offline cache must forget them too, or the snapshot fallback
+      // below (and any offline start) would resurrect the banned room.
+      purgeSnapshotCodes(deadCodes);
     }
     const messageLists = await Promise.all(
       spaces.map((s) =>
@@ -1370,9 +1433,21 @@ async function refreshActiveSpace() {
   const nth = (fullRefreshCounter.get(active.code) ?? 0) + 1;
   fullRefreshCounter.set(active.code, nth);
   const fullRefresh = !latest || nth % FULL_REFRESH_EVERY === 0;
-  const fresh = filterRetained(
-    await fetchMessages(active.code, fullRefresh ? undefined : latest - SYNC_OVERLAP_MS),
-  );
+  const freshRaw = await fetchMessages(
+    active.code,
+    fullRefresh ? undefined : latest - SYNC_OVERLAP_MS,
+  ).catch((e: unknown) => {
+    // Removed while we were polling: drop the room here instead of letting
+    // the rejection escape (void refreshActiveSpace() would surface it as an
+    // uncaught error). Any other failure already returns [] inside.
+    if (e instanceof Error && e.message.includes("SPACE_USER_BANNED")) return null;
+    return [];
+  });
+  if (freshRaw === null) {
+    dropBannedSpace(active.code);
+    return;
+  }
+  const fresh = filterRetained(freshRaw);
 
   // Incremental results only contain new/overlapping rows — merge them over
   // the messages we hold instead of replacing the whole Space window.
@@ -1796,7 +1871,14 @@ export async function unlockSpaceMessages(code: string, password: string): Promi
   }
   const current = state.spaces.find((s) => s.code === code);
   if (!current) return;
-  const fresh = await fetchMessages(code);
+  const fresh = await fetchMessages(code).catch((e: unknown) => {
+    if (e instanceof Error && e.message.includes("SPACE_USER_BANNED")) return null;
+    return [];
+  });
+  if (fresh === null) {
+    dropBannedSpace(code);
+    return;
+  }
   const kept = state.messages.filter(
     (m) =>
       m.spaceId !== current.id &&

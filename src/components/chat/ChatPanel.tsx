@@ -253,7 +253,6 @@ export function ChatPanel({
   const [roomPasswordSettingInput, setRoomPasswordSettingInput] = useState("");
   const [showRoomPasswordBox, setShowRoomPasswordBox] = useState(false);
   const [showAccessBox, setShowAccessBox] = useState(false);
-  const [kickInput, setKickInput] = useState("");
   const [bans, setBans] = useState<{ userId: string; bannedAt: number }[]>([]);
   const [bansLoading, setBansLoading] = useState(false);
   const isOwner = space?.ownerId === userId;
@@ -514,7 +513,7 @@ export function ChatPanel({
 
     messages.forEach((m) => {
       const dateStr = new Date(m.createdAt).toLocaleString();
-      const author = m.authorName || m.authorId;
+      const author = m.authorName || "Member";
       const body = m.text ? m.text : `[Attachment: ${m.fileName || m.kind}]`;
       content += `[${dateStr}] ${author}: ${body}\n`;
     });
@@ -1622,6 +1621,29 @@ export function ChatPanel({
   const otherMembers = activeMembers.filter((m) => m.userId !== userId);
   const otherMemberNames = [...new Set(otherMembers.map((m) => m.name))];
 
+  // Owner's kick roster: DISPLAY NAMES ONLY — unique identity codes are never
+  // rendered, typed, or needed to moderate. Built from everyone who has spoken
+  // here (so offline members are listable) overlaid with live presence names;
+  // already-removed users drop out of the roster via the bans list below but
+  // stay in the name map so "Removed users" can label them by name too.
+  const memberNamesById = (() => {
+    const byId = new Map<string, string>();
+    for (const m of messages) {
+      if (m.authorId && m.authorId !== userId) {
+        byId.set(m.authorId, m.authorName.trim() || "Member");
+      }
+    }
+    for (const m of activeMembers) {
+      if (m.userId && m.userId !== userId && m.name.trim()) {
+        byId.set(m.userId, m.name.trim());
+      }
+    }
+    return byId;
+  })();
+  const memberList = [...memberNamesById.entries()]
+    .filter(([id]) => !bans.some((b) => b.userId === id))
+    .map(([id, name]) => ({ userId: id, name }));
+
   // Abandonment guard: alone in a room nobody else has joined yet.
   const aloneInSpace = Boolean(spaceCode) && membersReady && otherMemberNames.length === 0;
   const showSoloTip = aloneInSpace && !searchQuery && !soloTipDismissed.includes(spaceCode ?? "");
@@ -2218,44 +2240,66 @@ export function ChatPanel({
                   {space.isReadonly ? "Allow everyone to post" : "Make read-only"}
                 </button>
               </div>
-              <div className="flex items-center gap-1.5">
-                <input
-                  value={kickInput}
-                  onChange={(e) => setKickInput(e.target.value)}
-                  placeholder="Kick user ID (e.g. MAMA-1234-EYAB)"
-                  autoComplete="off"
-                  maxLength={64}
-                  className="min-w-0 flex-1 rounded-lg bg-card px-2 py-1 uppercase outline-none ring-1 ring-input focus:ring-primary"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const target = kickInput.trim();
-                    if (!target) {
-                      toast.error("Enter a user ID to kick");
-                      return;
-                    }
-                    if (
-                      !window.confirm(
-                        `Remove ${target.toUpperCase()} from this Space? They lose access immediately.`,
-                      )
-                    )
-                      return;
-                    void (async () => {
-                      const ok = await kickSpaceUser(space.id, target);
-                      toast[ok ? "success" : "error"](
-                        ok ? `${target.toUpperCase()} removed` : "Couldn't remove that user",
-                      );
-                      if (ok) {
-                        setKickInput("");
-                        void loadBans();
-                      }
-                    })();
-                  }}
-                  className="rounded-lg bg-destructive/10 px-2 py-1 font-semibold text-destructive ring-1 ring-destructive/30 hover:bg-destructive/20"
-                >
-                  Kick
-                </button>
+              <div className="rounded-lg bg-card p-2 ring-1 ring-input">
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Members ({memberList.length})
+                </p>
+                {memberList.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    {membersReady ? "No other members have been here yet." : "Checking who's here…"}
+                  </p>
+                ) : (
+                  <ul className="max-h-44 space-y-1 overflow-y-auto">
+                    {memberList.map((m) => (
+                      <li
+                        key={m.userId}
+                        className="flex items-center justify-between gap-2 rounded-lg bg-background px-2 py-1 ring-1 ring-input"
+                      >
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span
+                            className={`size-1.5 shrink-0 rounded-full ${
+                              activeMembers.some((a) => a.userId === m.userId)
+                                ? "bg-emerald-400"
+                                : "bg-muted-foreground/40"
+                            }`}
+                            aria-hidden="true"
+                          />
+                          <span className="truncate text-[11px] font-medium">{m.name}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (
+                              !window.confirm(
+                                `Remove ${m.name} from this Space? They lose access immediately.`,
+                              )
+                            )
+                              return;
+                            void (async () => {
+                              const ok = await kickSpaceUser(space.id, m.userId);
+                              toast[ok ? "success" : "error"](
+                                ok
+                                  ? `${m.name} removed from the room`
+                                  : "Couldn't remove that member",
+                              );
+                              if (ok) {
+                                setBans((prev) =>
+                                  prev.some((b) => b.userId === m.userId)
+                                    ? prev
+                                    : [...prev, { userId: m.userId, bannedAt: Date.now() }],
+                                );
+                                void loadBans();
+                              }
+                            })();
+                          }}
+                          className="shrink-0 rounded-lg bg-destructive/10 px-2 py-0.5 font-semibold text-destructive ring-1 ring-destructive/30 hover:bg-destructive/20"
+                        >
+                          Kick
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
               <div>
                 <button
@@ -2267,29 +2311,38 @@ export function ChatPanel({
                 </button>
                 {bans.length > 0 && (
                   <ul className="mt-1 space-y-1">
-                    {bans.map((b) => (
-                      <li
-                        key={b.userId}
-                        className="flex items-center justify-between gap-2 rounded-lg bg-card px-2 py-1 ring-1 ring-input"
-                      >
-                        <span className="truncate font-mono text-[10px]">{b.userId}</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void (async () => {
-                              const ok = await unbanSpaceUser(space.id, b.userId);
-                              toast[ok ? "success" : "error"](
-                                ok ? `${b.userId} can rejoin` : "Couldn't unban",
-                              );
-                              if (ok) void loadBans();
-                            })();
-                          }}
-                          className="shrink-0 font-semibold text-primary hover:underline"
+                    {bans.map((b) => {
+                      // Privacy: label by display name; the unique ID is passed
+                      // to unbanSpaceUser internally and never rendered.
+                      const label =
+                        memberNamesById.get(b.userId) ??
+                        (b.bannedAt
+                          ? `Removed member · ${new Date(b.bannedAt).toLocaleDateString()}`
+                          : "Removed member");
+                      return (
+                        <li
+                          key={b.userId}
+                          className="flex items-center justify-between gap-2 rounded-lg bg-card px-2 py-1 ring-1 ring-input"
                         >
-                          Unban
-                        </button>
-                      </li>
-                    ))}
+                          <span className="truncate text-[11px] font-medium">{label}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void (async () => {
+                                const ok = await unbanSpaceUser(space.id, b.userId);
+                                toast[ok ? "success" : "error"](
+                                  ok ? `${label} can rejoin` : "Couldn't unban",
+                                );
+                                if (ok) void loadBans();
+                              })();
+                            }}
+                            className="shrink-0 font-semibold text-primary hover:underline"
+                          >
+                            Unban
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
