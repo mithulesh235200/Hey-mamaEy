@@ -102,6 +102,9 @@ const HIDDEN_KEY = "heymamaey.hiddenForMe.v1";
 const OFFLINE_SNAPSHOT_KEY = "heymamaey.offlineCache.v1";
 const OUTBOX_KEY = "heymamaey.outbox.v1";
 // Re-entry keys (all local, all by CODE so they survive id churn).
+// Legacy: the launch-restore target ("reopen last room on start") was
+// removed — the app now always opens on the space list. The key is only
+// purged (hydrate + wipeStoredIdentity), never read or written.
 const LAST_SPACE_KEY = "heymamaey.lastSpace";
 const RECENT_SPACES_KEY = "heymamaey.recentSpaces";
 const SPACE_PINS_KEY = "heymamaey.spacePins";
@@ -190,7 +193,8 @@ function restoreOfflineSnapshot(): boolean {
   set({
     spaces: snapshot.spaces,
     messages: filterRetained(snapshot.messages, snapshot.spaces),
-    // Offline start still lands the user back in their last-opened room.
+    // Offline start opens the space list like any other launch (the rule-1
+    // branch keeps an in-session selection when one exists).
     activeSpaceId: resolveActiveSpaceId(snapshot.spaces),
   });
   return true;
@@ -285,29 +289,11 @@ function saveRecents(list: SpaceRecent[]) {
   }
 }
 
-function loadLastSpaceCode(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(LAST_SPACE_KEY) || null;
-  } catch {
-    return null;
-  }
-}
-
-function saveLastSpaceCode(code: string | null) {
-  if (typeof window === "undefined") return;
-  try {
-    if (code) window.localStorage.setItem(LAST_SPACE_KEY, code);
-    else window.localStorage.removeItem(LAST_SPACE_KEY);
-  } catch {
-    /* best-effort */
-  }
-}
-
 /**
- * Mark a space as freshly opened: push it to the head of recents (capped) and
- * remember it as the space to restore on the next launch. Called by every
- * path that makes a space active (tap, create, join, deep link).
+ * Mark a space as freshly opened: push it to the head of recents (capped).
+ * Called by every path that makes a space active (tap, create, join, deep
+ * link). This deliberately does NOT influence app launch — opening the app
+ * always starts on the space list, never inside a chat.
  */
 function markSpaceActive(code: string) {
   if (!code) return;
@@ -317,10 +303,9 @@ function markSpaceActive(code: string) {
   );
   set({ recents: next });
   saveRecents(next);
-  saveLastSpaceCode(code);
 }
 
-/** Drop a left/killed space from pins, recents and the last-opened key. */
+/** Drop a left/killed space from pins and recents. */
 function forgetSpaceCode(code: string) {
   if (!code) return;
   if (state.pinnedCodes.includes(code)) {
@@ -333,7 +318,6 @@ function forgetSpaceCode(code: string) {
     set({ recents });
     saveRecents(recents);
   }
-  if (loadLastSpaceCode() === code) saveLastSpaceCode(null);
 }
 
 /* ---------- left-room tombstones: membership sync must not resurrect ------ */
@@ -397,24 +381,21 @@ function dropBannedSpace(code: string) {
 }
 
 /**
- * Resolve which space a freshly-loaded list should open:
- *   1. the current selection, when it is still in the list;
- *   2. else the last space the user opened (`heymamaey.lastSpace`, stored as a
- *      CODE so it survives id churn and re-joins);
- *   3. else null (nothing open).
+ * Resolve which space a freshly-loaded list should show:
+ *   1. the current selection, when it is still in the list (a mid-session
+ *      sync must not kick the user out of the room they are reading);
+ *   2. else null — launching the app opens the space list, NEVER a chat.
  *
- * NOTE: rule 2 is a deliberate, product-approved override of the old
- * "Never auto-open a Space on app launch" rule — reopening the app now lands
- * you back in the room you left. An explicit `?space=` deep-link join still
- * wins because hydrate() runs it AFTER loadSpaces().
+ * Launch no longer restores the last-opened room (removed on request —
+ * opening the app used to drop you straight into your last conversation).
+ * An explicit `?space=` deep-link join still opens its room because
+ * hydrate() runs it AFTER loadSpaces().
  */
 function resolveActiveSpaceId(spaces: Space[]): string | null {
   if (state.activeSpaceId && spaces.some((s) => s.id === state.activeSpaceId)) {
     return state.activeSpaceId;
   }
-  const lastCode = loadLastSpaceCode();
-  if (!lastCode) return null;
-  return spaces.find((s) => s.code === lastCode)?.id ?? null;
+  return null;
 }
 
 /** Pin/unpin a space in MY ROOMS. Returns true when it is pinned afterwards. */
@@ -1503,9 +1484,8 @@ async function loadSpaces() {
     set({
       spaces,
       messages: validMessages,
-      // Keep the current selection when it is still valid; otherwise reopen
-      // the last space the user was in (by code). See resolveActiveSpaceId()
-      // for why this intentionally overrides the old "never auto-open" rule.
+      // Keep the current selection when it is still valid; otherwise show
+      // the space list — launching the app never auto-opens a chat.
       activeSpaceId: resolveActiveSpaceId(spaces),
     });
     persistOfflineSnapshot();
@@ -1628,6 +1608,13 @@ export function hydrate() {
       recents: loadRecents(),
       ready: true,
     });
+    // Purge the legacy launch-restore key (the "reopen last room on start"
+    // behavior is gone; nothing reads it anymore).
+    try {
+      window.localStorage.removeItem(LAST_SPACE_KEY);
+    } catch {
+      /* ignore */
+    }
     // Show the last saved chats instantly so the app opens offline; the
     // network sync below refreshes them when possible.
     restoreOfflineSnapshot();
@@ -2659,7 +2646,7 @@ function wipeStoredIdentity() {
     window.localStorage.removeItem(READ_KEY);
     window.localStorage.removeItem(HIDDEN_KEY);
     // MY ROOMS is identity-scoped: a fresh/shared-device identity must not
-    // inherit the previous user's pins, recents or restore target.
+    // inherit the previous user's pins, recents or (legacy) restore target.
     window.localStorage.removeItem(SPACE_PINS_KEY);
     window.localStorage.removeItem(RECENT_SPACES_KEY);
     window.localStorage.removeItem(LAST_SPACE_KEY);
