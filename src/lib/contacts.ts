@@ -233,13 +233,27 @@ export function clearContacts(): void {
 }
 
 /**
- * Open the 1:1 chat for a friend: reuse the linked space, rejoin it, or
- * create a fresh private space and link it. Never throws (returns null).
+ * Open the 1:1 chat for a friend. WhatsApp-like pairing: the server keeps
+ * ONE direct thread per identity pair, so whichever side opens the chat
+ * first creates THE shared room and both sides always land on the same
+ * code (the friend is pre-registered as a member and discovers the room
+ * through the membership sync — no push invite needed). The legacy
+ * per-contact link remains as the offline / pre-migration fallback.
+ * Never throws (returns null).
  */
 export async function openDirectChat(contactId: string) {
   const contact = getContact(contactId);
   if (!contact) return null;
   const hm = await import("./heymama");
+  try {
+    const direct = await hm.getOrCreateDirectSpace(contact.id, `Chat with ${contact.nickname}`);
+    if (direct) {
+      if (contact.spaceCode !== direct.code) linkContactSpace(contact.id, direct.code);
+      return direct;
+    }
+  } catch {
+    /* offline / RPC unavailable — legacy flow below */
+  }
   const current = hm.store.get();
   if (contact.spaceCode) {
     const local = current.spaces.find((s) => s.code === contact.spaceCode);

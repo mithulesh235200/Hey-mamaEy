@@ -294,6 +294,26 @@ export type Database = {
           code: string;
         }[];
       };
+      get_or_create_direct_space: {
+        Args: { p_me: string; p_name?: string; p_other: string };
+        Returns: {
+          code: string;
+          created_at: string;
+          id: string;
+          name: string;
+          owner_id: string | null;
+        };
+        SetofOptions: {
+          from: "*";
+          to: "spaces";
+          isOneToOne: true;
+          isSetofReturn: false;
+        };
+      };
+      unregister_space_member: {
+        Args: { p_code: string; p_user_id: string };
+        Returns: boolean;
+      };
       get_space_messages: {
         Args: { p_code: string; p_password_hash?: string; p_user_id?: string };
         Returns: {

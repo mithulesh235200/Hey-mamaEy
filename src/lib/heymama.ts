@@ -336,6 +336,37 @@ function forgetSpaceCode(code: string) {
   if (loadLastSpaceCode() === code) saveLastSpaceCode(null);
 }
 
+/* ---------- left-room tombstones: membership sync must not resurrect ------ */
+
+const LEFT_CODES_KEY = "heymamaey.leftCodes.v1";
+const MAX_LEFT_CODES = 100;
+
+/**
+ * Remember a room the user deliberately left (or was removed from) so the
+ * membership sync never adopts it back. Cleared by an explicit join/open.
+ */
+function markSpaceLeft(code: string) {
+  if (!code) return;
+  saveStringList(
+    LEFT_CODES_KEY,
+    [code, ...loadStringList(LEFT_CODES_KEY).filter((c) => c !== code)].slice(0, MAX_LEFT_CODES),
+  );
+}
+
+function clearSpaceLeftMark(code: string) {
+  if (!code) return;
+  const current = loadStringList(LEFT_CODES_KEY);
+  if (!current.includes(code)) return;
+  saveStringList(
+    LEFT_CODES_KEY,
+    current.filter((c) => c !== code),
+  );
+}
+
+function isSpaceLeft(code: string): boolean {
+  return loadStringList(LEFT_CODES_KEY).includes(code);
+}
+
 /**
  * The server said we were removed from this room (SPACE_USER_BANNED):
  * forget it everywhere on this device — prefs, MY ROOMS, passwords, the
@@ -352,6 +383,7 @@ function dropBannedSpace(code: string) {
   } catch {
     /* ignore */
   }
+  markSpaceLeft(code);
   purgeSnapshotCodes([code]);
   const deadIds = new Set(state.spaces.filter((s) => s.code === code).map((s) => s.id));
   if (deadIds.size === 0) return;
@@ -1231,6 +1263,16 @@ async function registerMembership(code: string, userId: string): Promise<void> {
   }
 }
 
+/** Drop our membership row when leaving a room (else the sync adopts it back). */
+async function unregisterSpaceMember(code: string, userId: string): Promise<void> {
+  if (!code || !userId) return;
+  try {
+    await supabase.rpc("unregister_space_member", { p_code: code, p_user_id: userId });
+  } catch {
+    /* best-effort — a lingering row is filtered by the left-code mark */
+  }
+}
+
 /** Backfills memberships for all locally known codes (legacy/silent spaces). */
 function backfillMemberships() {
   const userId = prefs.userId;
@@ -1250,6 +1292,68 @@ async function fetchMemberCodes(userId: string): Promise<string[]> {
     return (data as { code: string }[]).map((r) => r.code).filter(Boolean);
   } catch {
     return [];
+  }
+}
+
+/* ---------- People auto-discovery: adopt rooms we were added to ---------- */
+
+let lastMembershipSyncAt = 0;
+let membershipSyncing = false;
+
+/**
+ * WhatsApp-like delivery: when a friend opens the direct chat (or anyone
+ * adds us to a room), the server records our membership — pick up ANY room
+ * we're a member of but don't have yet and adopt it with full history, even
+ * when the push invite never arrived. Runs once at startup and is throttled
+ * on the poll timer. Left/removed rooms are filtered by the tombstone marks.
+ */
+async function refreshMyMemberships() {
+  const uid = prefs.userId || state.userId;
+  if (!uid || isOffline() || membershipSyncing) return;
+  if (lastMembershipSyncAt !== 0 && Date.now() - lastMembershipSyncAt < 15000) return;
+  membershipSyncing = true;
+  lastMembershipSyncAt = Date.now();
+  try {
+    const codes = await fetchMemberCodes(uid);
+    const known = new Set(prefs.codes);
+    const fresh = codes.filter((c) => !known.has(c) && !isSpaceLeft(c));
+    if (fresh.length === 0) return;
+
+    const { getRoomPassword } = await import("./roomCrypto");
+    const adoptedSpaces: Space[] = [];
+    const adoptedMessages: Message[] = [];
+    for (const code of fresh) {
+      try {
+        // Locked/password-gated rooms throw access errors here — they stay
+        // code+password gated until the user opens them explicitly; only
+        // openly accessible rooms are adopted automatically.
+        const space = await fetchSpace(code, getRoomPassword(code));
+        if (!space || !space.code) continue;
+        adoptedSpaces.push(space);
+        rememberCode(space.code);
+        void registerMembership(space.code, uid);
+        const history = await fetchMessages(space.code).catch(() => []);
+        adoptedMessages.push(...history);
+      } catch {
+        continue;
+      }
+    }
+    if (adoptedSpaces.length === 0) return;
+
+    const knownIds = new Set(state.spaces.map((s) => s.id));
+    const knownCodes = new Set(state.spaces.map((s) => s.code));
+    const newSpaces = adoptedSpaces.filter((s) => !knownIds.has(s.id) && !knownCodes.has(s.code));
+    if (newSpaces.length === 0) return;
+    const messageIds = new Set(state.messages.map((m) => m.id));
+    set({
+      spaces: [...newSpaces, ...state.spaces],
+      messages: [...state.messages, ...adoptedMessages.filter((m) => !messageIds.has(m.id))],
+    });
+    persistOfflineSnapshot();
+  } catch {
+    /* best-effort — the next tick retries */
+  } finally {
+    membershipSyncing = false;
   }
 }
 
@@ -1536,6 +1640,9 @@ export function hydrate() {
         restoreOfflineSnapshot();
         set({ ready: true });
       }
+      // Adopt any room our identity was added to while we were away (direct
+      // chats, invites whose push never arrived).
+      void refreshMyMemberships();
       // Never attempt an invite join with no network — it always fails.
       if (isOffline()) return;
       const inviteCode = new URLSearchParams(window.location.search).get("space");
@@ -1556,6 +1663,7 @@ export function hydrate() {
     window.addEventListener("online", () => {
       void flushOutbox();
       void refreshActiveSpace();
+      void refreshMyMemberships();
       ensureRegisteredIdentity();
     });
   }
@@ -1563,6 +1671,8 @@ export function hydrate() {
   if (!pollTimer) {
     pollTimer = setInterval(() => {
       void refreshActiveSpace();
+      // Internally throttled: membership sync runs every other tick (~15 s).
+      void refreshMyMemberships();
     }, POLL_MS);
   }
 }
@@ -1697,6 +1807,7 @@ export async function joinSpace(rawCode: string, password = ""): Promise<Space |
   });
   if (!space || !space.id || !space.code) return null;
   if (password.trim()) setRoomPassword(space.code, password.trim());
+  clearSpaceLeftMark(space.code); // explicit join overrides a left-room mark
   rememberCode(space.code);
   try {
     await supabase.rpc("register_space_member", {
@@ -1710,6 +1821,42 @@ export async function joinSpace(rawCode: string, password = ""): Promise<Space |
   const history = await fetchMessages(space.code).catch(() => []);
   const existingIds = new Set(state.messages.map((m) => m.id));
 
+  set({
+    spaces: [space, ...state.spaces.filter((s) => s.id !== space.id && s.code !== space.code)],
+    messages: [...state.messages, ...history.filter((m) => !existingIds.has(m.id))],
+    activeSpaceId: space.id,
+  });
+  markSpaceActive(space.code);
+  persistOfflineSnapshot();
+  return space;
+}
+
+/**
+ * People (WhatsApp-like): open THE shared 1:1 room for an identity pair.
+ * The server keeps one thread per pair — whoever asks first creates it, and
+ * BOTH identities are pre-registered as members, so the friend's device
+ * discovers the room through the membership sync even when no push invite
+ * arrives. Both sides therefore always land on the same room code.
+ * Throws on RPC failure so callers can fall back to the legacy flow.
+ */
+export async function getOrCreateDirectSpace(otherId: string, name: string): Promise<Space | null> {
+  const me = state.userId || prefs.userId || "";
+  if (!me || !otherId.trim()) return null;
+  const { data, error } = await supabase.rpc("get_or_create_direct_space", {
+    p_me: me,
+    p_other: otherId.trim(),
+    p_name: name,
+  });
+  if (error) throw new Error(error.message);
+  const row = (Array.isArray(data) ? data[0] : data) as SpaceRow | null;
+  if (!row || !row.id || !row.code) return null;
+
+  const space = toSpace(row);
+  clearSpaceLeftMark(space.code); // explicit open = the user wants back in
+  rememberCode(space.code);
+  void registerMembership(space.code, me);
+  const history = await fetchMessages(space.code).catch(() => []);
+  const existingIds = new Set(state.messages.map((m) => m.id));
   set({
     spaces: [space, ...state.spaces.filter((s) => s.id !== space.id && s.code !== space.code)],
     messages: [...state.messages, ...history.filter((m) => !existingIds.has(m.id))],
@@ -1902,6 +2049,10 @@ export function leaveSpace(spaceId: string): boolean {
     } catch {
       /* ignore */
     }
+    // The server must forget our membership too, and the local tombstone
+    // stops the membership sync from adopting a lingering row right back.
+    void unregisterSpaceMember(space.code, state.userId || prefs.userId || "");
+    markSpaceLeft(space.code);
   }
   set({
     spaces: state.spaces.filter((s) => s.id !== spaceId),
