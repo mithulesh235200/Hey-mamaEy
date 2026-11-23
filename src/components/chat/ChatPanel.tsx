@@ -85,6 +85,7 @@ import {
 import { MessageBubble } from "./MessageBubble";
 import { createP2PSender } from "@/lib/p2p-file";
 import { dataUrlToBlob, saveAttachmentToDevice, uploadAttachment } from "@/lib/attachments";
+import { chatTitleFor, useContacts } from "@/lib/contacts";
 import {
   ACCEPT_AUDIO,
   ACCEPT_DOCUMENT,
@@ -189,6 +190,11 @@ export function ChatPanel({
   mobileQuickBar: boolean;
 }) {
   const [text, setText] = useState("");
+  const contacts = useContacts();
+  // WhatsApp-style title: OUR saved nickname for this chat's person — each
+  // side shows its own name for the other; legacy "Chat with X" rooms
+  // display as a bare "X".
+  const chatTitle = space ? chatTitleFor(space, contacts) : "";
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
   const [showMobileActions, setShowMobileActions] = useState(false);
@@ -432,7 +438,7 @@ export function ChatPanel({
         Notification.permission === "granted"
       ) {
         try {
-          new Notification(`New message in ${space?.name || "Space"}`, {
+          new Notification(`New message in ${chatTitle || "Space"}`, {
             body: `${last.authorName}: ${last.text || last.fileName || "Shared media"}`,
             icon: "/heymama.jpeg",
           });
@@ -448,7 +454,7 @@ export function ChatPanel({
     soundEffectsEnabled,
     notificationsEnabled,
     space?.id,
-    space?.name,
+    chatTitle,
   ]);
 
   const unlockSpace = () => {
@@ -509,7 +515,7 @@ export function ChatPanel({
       toast.error("No chat history to export");
       return;
     }
-    let content = `=========================================\nHEY MAMAEY - CHAT EXPORT BACKUP\nSpace: ${space?.name} (Code: ${space?.code})\nExported: ${new Date().toLocaleString()}\n=========================================\n\n`;
+    let content = `=========================================\nHEY MAMAEY - CHAT EXPORT BACKUP\nSpace: ${chatTitle || "Space"} (Code: ${space?.code})\nExported: ${new Date().toLocaleString()}\n=========================================\n\n`;
 
     messages.forEach((m) => {
       const dateStr = new Date(m.createdAt).toLocaleString();
@@ -548,7 +554,7 @@ export function ChatPanel({
         if (!result.shared) toast.success("Saved to your device!");
       } else {
         toast.error("Couldn't save yet — file opened in a new tab", {
-          description: "Long-press / right-click the file and choose Save.",
+          description: result.error || "Long-press / right-click the file and choose Save.",
         });
       }
     } catch {
@@ -1014,7 +1020,7 @@ export function ChatPanel({
       if (deleteSpaceMode === "me") {
         const removed = leaveSpace(space.id);
         if (removed) {
-          toast.success(`Removed “${space.name}” from your spaces`);
+          toast.success(`Removed “${chatTitle}” from your spaces`);
           setShowDeleteSpaceModal(false);
         } else {
           toast.error("Couldn't remove this space from your account");
@@ -1029,7 +1035,7 @@ export function ChatPanel({
 
       const removed = await deleteSpaceForEveryone(space.id);
       if (removed) {
-        toast.success(`“${space.name}” was deleted for everyone`);
+        toast.success(`“${chatTitle}” was deleted for everyone`);
         setShowDeleteSpaceModal(false);
       } else {
         toast.error("Couldn't delete the space for everyone. Check the connection and try again.");
@@ -1690,7 +1696,7 @@ export function ChatPanel({
             <Lock className="size-7" />
           </div>
           <div>
-            <h3 className="font-bold text-base text-foreground">{space.name} is Locked</h3>
+            <h3 className="font-bold text-base text-foreground">{chatTitle} is Locked</h3>
             <p className="text-xs text-muted-foreground mt-1">
               Enter your 4-digit PIN to access messages
             </p>
@@ -1732,7 +1738,7 @@ export function ChatPanel({
             <ChevronLeft className="size-4" />
           </button>
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-sm font-bold text-foreground">{space.name}</h2>
+            <h2 className="truncate text-sm font-bold text-foreground">{chatTitle}</h2>
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
               <span className="whitespace-nowrap font-mono font-semibold text-primary">
                 <span className="hidden min-[400px]:inline">Code: </span>
@@ -3093,7 +3099,7 @@ export function ChatPanel({
               </span>
               <div>
                 <h3 id="delete-space-title" className="font-bold">
-                  Delete “{space.name}”?
+                  Delete “{chatTitle}”?
                 </h3>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Choose whether to remove it just from your list or for everyone.
@@ -3192,7 +3198,7 @@ export function ChatPanel({
                 size={224}
                 level="M"
                 includeMargin
-                title={inviteUrl ? `Join ${space.name}` : `Space code ${space.code}`}
+                title={inviteUrl ? `Join ${chatTitle}` : `Space code ${space.code}`}
               />
               <p className="mt-2 text-xs font-mono font-bold text-slate-800 tracking-wider">
                 SPACE CODE: {space.code}
@@ -3200,7 +3206,7 @@ export function ChatPanel({
             </div>
 
             <div>
-              <h4 className="font-bold text-sm text-foreground">{space.name}</h4>
+              <h4 className="font-bold text-sm text-foreground">{chatTitle}</h4>
               <p className="text-xs text-muted-foreground mt-0.5">
                 {inviteUrl
                   ? "Scan to open the invite and join this Space."

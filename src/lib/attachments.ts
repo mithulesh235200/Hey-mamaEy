@@ -105,6 +105,34 @@ function shouldUseShareSheet(): boolean {
 }
 
 /**
+ * Fetch a remote file's bytes with one retry: transient network blips are
+ * the most common reason a save falls back to "opened in a new tab", while
+ * 4xx (object pruned/gone) never heals and fails fast with the real status.
+ */
+async function fetchBytes(url: string, attempts = 2): Promise<Response> {
+  let lastErr: unknown = new Error("Download failed");
+  for (let i = 0; i < attempts; i++) {
+    let res: Response;
+    try {
+      res = await fetch(url, { mode: "cors" });
+    } catch (e) {
+      lastErr = e; // network / CORS — worth one retry
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, 600));
+      continue;
+    }
+    if (res.ok) return res;
+    const statusErr = new Error(`Download failed (HTTP ${res.status})`) as Error & {
+      status?: number;
+    };
+    statusErr.status = res.status;
+    if (res.status >= 400 && res.status < 500) throw statusErr; // permanent
+    lastErr = statusErr; // 5xx — retry
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, 600));
+  }
+  throw lastErr;
+}
+
+/**
  * Saves a remote (Supabase Storage) or inline data: URL to the device's
  * local storage (Downloads folder on desktop, Downloads/Gallery on phones).
  *
@@ -140,15 +168,14 @@ export async function saveAttachmentToDevice(
         triggerBlobDownload(blob, safeName);
         return { ok: true };
       }
-      // Fall back to direct anchor if the blob can't be re-fetched.
-      triggerBlobDownload(new Blob(), safeName);
-      return { ok: false, error: "Could not read file data" };
+      // The blob died with the page/session that created it — there is
+      // nothing to recover (and downloading a 0-byte stub helps no one).
+      return { ok: false, error: "This file's local copy expired — ask for it to be re-sent" };
     }
 
     // Remote Supabase Storage URL: fetch bytes (bucket is CORS-enabled),
     // then save as a same-origin blob so the browser honours the filename.
-    const res = await fetch(url, { mode: "cors" });
-    if (!res.ok) throw new Error(`Download failed (HTTP ${res.status})`);
+    const res = await fetchBytes(url);
     const blob = await res.blob();
 
     // On phones only, prefer the system share sheet so the user can
@@ -186,6 +213,33 @@ export async function saveAttachmentToDevice(
     triggerBlobDownload(blob, safeName);
     return { ok: true };
   } catch (err) {
+    // The object itself is gone (pruned / expired): say so instead of
+    // pretending a save happened.
+    const status = (err as { status?: number } | null)?.status;
+    if (typeof status === "number" && status >= 400 && status < 500) {
+      return {
+        ok: false,
+        error:
+          status === 404 ? "This file is no longer available" : `Download failed (HTTP ${status})`,
+      };
+    }
+    // Supabase Storage honours ?download=<filename> (Content-Disposition:
+    // attachment) on a plain navigation — which works cross-origin even
+    // when fetch() is blocked — turning the old "opened in a new tab,
+    // right-click to save" dead-end into an actual save.
+    if (/\/storage\/v1\//.test(url)) {
+      try {
+        const sep = url.includes("?") ? "&" : "?";
+        window.open(
+          `${url}${sep}download=${encodeURIComponent(safeName)}`,
+          "_blank",
+          "noopener,noreferrer",
+        );
+        return { ok: true };
+      } catch {
+        /* fall through to the generic fallback below */
+      }
+    }
     // Last resort: open the URL so the user can long-press / right-click save.
     try {
       window.open(url, "_blank", "noopener,noreferrer");

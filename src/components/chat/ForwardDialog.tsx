@@ -2,6 +2,7 @@ import { Hash, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { forwardMessage, type Message, type Space } from "@/lib/heymama";
+import { chatTitleFor, useContacts } from "@/lib/contacts";
 
 export function ForwardDialog({
   message,
@@ -13,6 +14,7 @@ export function ForwardDialog({
   onClose: () => void;
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);
+  const contacts = useContacts();
 
   // Escape closes the dialog — the only modal in the app that lacked it.
   useEffect(() => {
@@ -66,7 +68,7 @@ export function ForwardDialog({
                   try {
                     const sent = await forwardMessage(message, s.id);
                     if (sent) {
-                      toast.success(`Forwarded to ${s.name}`);
+                      toast.success(`Forwarded to ${chatTitleFor(s, contacts)}`);
                       onClose();
                     } else {
                       toast.error(
@@ -85,7 +87,9 @@ export function ForwardDialog({
                   <Hash className="size-4" />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{s.name}</span>
+                  <span className="block truncate text-sm font-medium">
+                    {chatTitleFor(s, contacts)}
+                  </span>
                   <span className="font-mono text-[10px] text-muted-foreground">{s.code}</span>
                 </span>
               </button>

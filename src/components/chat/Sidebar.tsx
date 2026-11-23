@@ -31,6 +31,7 @@ import {
   type Space,
 } from "@/lib/heymama";
 import { isBackupToken, validatePermanentAccessKey } from "@/lib/accessKey";
+import { chatTitleFor, useContacts } from "@/lib/contacts";
 import {
   ACCENTS,
   PREFERENCES_EVENT,
@@ -64,6 +65,7 @@ export function Sidebar({
   onOpenSettings?: () => void;
 }) {
   const chatState = useChatState();
+  const contacts = useContacts();
   const [joinCode, setJoinCode] = useState("");
   const [joinPassword, setJoinPassword] = useState("");
   const [newName, setNewName] = useState("");
@@ -191,7 +193,7 @@ export function Sidebar({
       setJoinCode("");
       setJoinPassword("");
       markSpaceAsRead(space.id);
-      toast.success(`Joined ${space.name}`);
+      toast.success(`Joined ${chatTitleFor(space, contacts)}`);
       onNavigate?.();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
@@ -256,12 +258,14 @@ export function Sidebar({
 
   const handleTogglePin = (s: Space) => {
     const pinned = togglePin(s.code);
-    toast.success(pinned ? `Pinned “${s.name}” to My Rooms` : `Unpinned “${s.name}”`);
+    const title = chatTitleFor(s, contacts);
+    toast.success(pinned ? `Pinned “${title}” to My Rooms` : `Unpinned “${title}”`);
   };
 
   const renderSpaceRow = (s: Space) => {
     const unread = getUnreadCount(s.id, messages, userId, chatState.readTimestamps);
     const pinned = pinnedSet.has(s.code);
+    const title = chatTitleFor(s, contacts);
 
     return (
       <div
@@ -295,7 +299,7 @@ export function Sidebar({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center justify-between gap-1">
               <p className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">
-                {s.name}
+                {title}
               </p>
               <span className="shrink-0 font-mono text-[10px] text-primary">
                 {`${s.hasPassword ? "🔒 " : ""}${s.isLocked ? "🚫 " : ""}${s.isReadonly ? "📖 " : ""}${s.code}`}
@@ -312,7 +316,7 @@ export function Sidebar({
         <button
           type="button"
           onClick={() => handleTogglePin(s)}
-          aria-label={pinned ? `Unpin ${s.name}` : `Pin ${s.name}`}
+          aria-label={pinned ? `Unpin ${title}` : `Pin ${title}`}
           title={pinned ? "Unpin from My Rooms" : "Pin to My Rooms"}
           className={
             "inline-flex min-h-9 min-w-9 items-center justify-center rounded-lg p-1.5 transition-opacity focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 " +
@@ -326,11 +330,11 @@ export function Sidebar({
         <button
           type="button"
           onClick={async () => {
-            if (!window.confirm(`Leave "${s.name}"?`)) return;
+            if (!window.confirm(`Leave "${title}"?`)) return;
             const ok = await leaveSpace(s.id);
-            toast[ok ? "success" : "error"](ok ? `Left ${s.name}` : "Couldn't leave Space");
+            toast[ok ? "success" : "error"](ok ? `Left ${title}` : "Couldn't leave Space");
           }}
-          aria-label={`Leave ${s.name}`}
+          aria-label={`Leave ${title}`}
           className="opacity-100 focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 rounded-lg p-1.5 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive min-h-9 min-w-9 inline-flex items-center justify-center"
         >
           <LogOut className="size-3.5" />

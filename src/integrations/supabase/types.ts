@@ -292,6 +292,8 @@ export type Database = {
         Args: { p_user_id: string };
         Returns: {
           code: string;
+          owner_id: string | null;
+          is_direct: boolean;
         }[];
       };
       get_or_create_direct_space: {

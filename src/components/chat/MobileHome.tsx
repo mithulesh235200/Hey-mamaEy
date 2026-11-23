@@ -26,6 +26,7 @@ import {
   type Message,
   type Space,
 } from "@/lib/heymama";
+import { chatTitleFor, useContacts } from "@/lib/contacts";
 import { People } from "./People";
 
 type MobileHomeProps = {
@@ -75,16 +76,21 @@ export function MobileHome({
   // (stable sort keeps the normal recent order within each group).
   const pinnedCodes = useChatState().pinnedCodes;
   const pinnedSet = useMemo(() => new Set(pinnedCodes), [pinnedCodes]);
+  const contacts = useContacts();
 
   const filteredSpaces = useMemo(() => {
     const value = query.trim().toLocaleLowerCase();
     const matches = value
-      ? spaces.filter((space) => `${space.name} ${space.code}`.toLocaleLowerCase().includes(value))
+      ? spaces.filter((space) =>
+          `${chatTitleFor(space, contacts)} ${space.name} ${space.code}`
+            .toLocaleLowerCase()
+            .includes(value),
+        )
       : spaces;
     return [...matches].sort(
       (a, b) => Number(pinnedSet.has(b.code)) - Number(pinnedSet.has(a.code)),
     );
-  }, [query, spaces, pinnedSet]);
+  }, [query, spaces, pinnedSet, contacts]);
 
   const saveName = () => {
     const value = editingName.trim();
@@ -151,7 +157,7 @@ export function MobileHome({
       markSpaceAsRead(space.id);
       setJoinCode("");
       setJoinPassword("");
-      toast.success(`Joined ${space.name}`);
+      toast.success(`Joined ${chatTitleFor(space, contacts)}`);
       onClose?.();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
@@ -414,7 +420,7 @@ export function MobileHome({
                           <span className="flex min-w-0 items-center gap-2">
                             <span className="min-w-0 flex-1 truncate text-sm font-semibold">
                               {pinnedSet.has(space.code) ? "📌 " : ""}
-                              {space.name}
+                              {chatTitleFor(space, contacts)}
                             </span>
                             <span className="shrink-0 text-[11px] font-mono text-primary">
                               {`${space.hasPassword ? "🔒 " : ""}${space.isLocked ? "🚫 " : ""}${space.isReadonly ? "📖 " : ""}${space.code}`}

@@ -115,7 +115,7 @@ export function P2PFileBubble({
         if (!result.shared) toast.success("Saved to your device!");
       } else {
         toast.error("Couldn't save yet — file opened in a new tab", {
-          description: "Long-press / right-click the file and choose Save.",
+          description: result.error || "Long-press / right-click the file and choose Save.",
         });
       }
     } finally {

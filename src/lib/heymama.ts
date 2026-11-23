@@ -1223,7 +1223,7 @@ export async function syncUserSpacesFromCloud(userId: string): Promise<string[]>
     // Explicit memberships cover silent + legacy spaces (never messaged, no owner).
     const memberCodes = await fetchMemberCodes(userId);
 
-    const merged = [...new Set([...prefs.codes, ...cloudCodes, ...memberCodes])];
+    const merged = [...new Set([...prefs.codes, ...cloudCodes, ...memberCodes.map((r) => r.code)])];
     if (merged.length !== prefs.codes.length) {
       prefs.codes = merged;
       savePrefs();
@@ -1263,14 +1263,16 @@ function backfillMemberships() {
   }
 }
 
-async function fetchMemberCodes(userId: string): Promise<string[]> {
+type MemberSpaceRow = { code: string; owner_id: string | null; is_direct: boolean };
+
+async function fetchMemberCodes(userId: string): Promise<MemberSpaceRow[]> {
   if (!userId) return [];
   try {
     const { data, error } = await supabase.rpc("get_member_space_codes", {
       p_user_id: userId,
     });
     if (error || !data) return [];
-    return (data as { code: string }[]).map((r) => r.code).filter(Boolean);
+    return (data as MemberSpaceRow[]).filter((r) => Boolean(r?.code));
   } catch {
     return [];
   }
@@ -1295,9 +1297,27 @@ async function refreshMyMemberships() {
   membershipSyncing = true;
   lastMembershipSyncAt = Date.now();
   try {
-    const codes = await fetchMemberCodes(uid);
+    const rows = await fetchMemberCodes(uid);
+
+    // WhatsApp-style titles: link every DIRECT room to MY contact for the
+    // friend who owns it (each side does this independently) so both sides
+    // show their own nickname for the other person — never the creator's
+    // "Chat with X" from the wrong perspective. Local-only, best-effort.
+    try {
+      const contacts = await import("./contacts");
+      for (const row of rows) {
+        if (!row.is_direct || !row.owner_id || row.owner_id === uid) continue;
+        const contact = contacts.getContact(row.owner_id);
+        if (contact && contact.spaceCode !== row.code) {
+          contacts.linkContactSpace(contact.id, row.code);
+        }
+      }
+    } catch {
+      /* titles fall back to the room name until contacts are available */
+    }
+
     const known = new Set(prefs.codes);
-    const fresh = codes.filter((c) => !known.has(c) && !isSpaceLeft(c));
+    const fresh = rows.map((r) => r.code).filter((c) => !known.has(c) && !isSpaceLeft(c));
     if (fresh.length === 0) return;
 
     const { getRoomPassword } = await import("./roomCrypto");
@@ -2782,7 +2802,7 @@ export async function restoreFromPermanentKey(
     // that owner/author tracking cannot see.
     const memberCodes = await fetchMemberCodes(prefs.userId);
     if (memberCodes.length > 0) {
-      prefs.codes = [...new Set([...prefs.codes, ...memberCodes])];
+      prefs.codes = [...new Set([...prefs.codes, ...memberCodes.map((r) => r.code)])];
       savePrefs();
     }
 

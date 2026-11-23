@@ -233,6 +233,23 @@ export function clearContacts(): void {
 }
 
 /**
+ * WhatsApp-style chat title: OUR saved nickname for the friend when this
+ * is their direct chat (each side shows its own name for the other — the
+ * room's stored name is only the creator's perspective), else the room
+ * name with the legacy "Chat with " prefix stripped so rooms created
+ * before the rename still display as a bare name.
+ */
+export function chatTitleFor(space: { code: string; name: string }, contacts: Contact[]): string {
+  const linked = contacts.find((c) => c.spaceCode === space.code);
+  if (linked?.nickname) return linked.nickname;
+  if (space.name.startsWith("Chat with ")) {
+    const bare = space.name.slice("Chat with ".length).trim();
+    if (bare) return bare;
+  }
+  return space.name;
+}
+
+/**
  * Open the 1:1 chat for a friend. WhatsApp-like pairing: the server keeps
  * ONE direct thread per identity pair, so whichever side opens the chat
  * first creates THE shared room and both sides always land on the same
@@ -246,7 +263,7 @@ export async function openDirectChat(contactId: string) {
   if (!contact) return null;
   const hm = await import("./heymama");
   try {
-    const direct = await hm.getOrCreateDirectSpace(contact.id, `Chat with ${contact.nickname}`);
+    const direct = await hm.getOrCreateDirectSpace(contact.id, contact.nickname);
     if (direct) {
       if (contact.spaceCode !== direct.code) linkContactSpace(contact.id, direct.code);
       return direct;
@@ -270,7 +287,7 @@ export async function openDirectChat(contactId: string) {
     }
   }
   try {
-    const created = await hm.createSpace(`Chat with ${contact.nickname}`, { mode: "private" });
+    const created = await hm.createSpace(contact.nickname, { mode: "private" });
     if (created) linkContactSpace(contact.id, created.code);
     return created;
   } catch {

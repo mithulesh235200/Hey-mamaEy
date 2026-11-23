@@ -7,6 +7,7 @@ import { Check, Copy, MessageCircle, Send, Trash2, UserPlus, Users } from "lucid
 import { toast } from "sonner";
 import {
   addContact,
+  chatTitleFor,
   linkContactSpace,
   openDirectChat,
   removeContact,
@@ -80,7 +81,7 @@ export function People({ userId, variant, onDone }: PeopleProps) {
       const { sent } = await sendFriendInvite({
         targetUserId: contact.id,
         spaceCode: space.code,
-        spaceName: space.name,
+        spaceName: chatTitleFor(space, contacts),
       });
       if (sent > 0) {
         toast.success(`Invite sent to ${contact.nickname} 🎉`);
