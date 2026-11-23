@@ -54,7 +54,40 @@ export async function uploadAttachment(
   }
 }
 
+/**
+ * Decode a data: URL to a Blob WITHOUT fetch(). fetch() on data: URLs is
+ * checked against CSP connect-src and can be blocked by browser/extension
+ * privacy settings — atob/decodeURIComponent never leave the page, so an
+ * inline (offline-fallback) message always saves.
+ */
+function decodeDataUrl(dataUrl: string): Blob | null {
+  const comma = dataUrl.indexOf(",");
+  if (comma < 5) return null; // no "data:...,payload" shape
+  const header = dataUrl.slice(5, comma); // strip the "data:" prefix
+  const payload = dataUrl.slice(comma + 1);
+  const mime = header.split(";")[0] || "application/octet-stream";
+  try {
+    if (/;base64/i.test(header)) {
+      // Forgiving base64: strip whitespace, restore missing padding.
+      let b64 = payload.replace(/\s+/g, "");
+      b64 += "=".repeat((4 - (b64.length % 4)) % 4);
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Blob([bytes], { type: mime });
+    }
+    return new Blob([decodeURIComponent(payload)], { type: mime });
+  } catch {
+    return null;
+  }
+}
+
 export async function dataUrlToBlob(dataUrl: string): Promise<Blob | null> {
+  if (dataUrl.startsWith("data:")) {
+    const local = decodeDataUrl(dataUrl);
+    if (local) return local;
+    // Corrupt base64 — let fetch() take a shot at it before giving up.
+  }
   try {
     const res = await fetch(dataUrl);
     return await res.blob();
@@ -153,10 +186,14 @@ export async function saveAttachmentToDevice(
   const safeName = sanitizeDownloadName(fileName, `space-file-${Date.now()}`);
 
   try {
-    // Inline base64 payloads (offline fallback): decode without a network hop.
+    // Inline base64 payloads (offline fallback): decode locally — fetch()
+    // on data: URLs is CSP/privacy-blockable, which made this branch (the
+    // most self-contained one!) the one that failed for users.
     if (url.startsWith("data:")) {
       const blob = await dataUrlToBlob(url);
-      if (!blob) return { ok: false, error: "Could not read file data" };
+      if (!blob) {
+        return { ok: false, error: "This file's data is damaged — ask for it to be re-sent" };
+      }
       triggerBlobDownload(blob, safeName);
       return { ok: true };
     }
