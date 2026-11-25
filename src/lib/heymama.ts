@@ -84,6 +84,11 @@ export type State = {
   spaces: Space[];
   messages: Message[];
   activeSpaceId: string | null;
+  /**
+   * Message id a Global Search result asked the open chat to reveal
+   * (scroll + brief highlight). Transient — cleared once handled.
+   */
+  jumpToMessageId: string | null;
   typingMap: Record<string, Record<string, string>>; // spaceId -> { userId: userName }
   readTimestamps: Record<string, number>; // spaceId -> lastReadTime
   hiddenMessageIds: string[]; // message IDs the user deleted for themselves only
@@ -543,6 +548,7 @@ const initialState: State = {
   spaces: [],
   messages: [],
   activeSpaceId: null,
+  jumpToMessageId: null,
   typingMap: {},
   readTimestamps: {},
   hiddenMessageIds: [],
@@ -2090,6 +2096,64 @@ export function setActiveSpace(spaceId: string | null) {
   if (space) markSpaceActive(space.code);
 }
 
+/**
+ * Ask the open chat to scroll to + briefly highlight a message — the
+ * jump-to-result action from Global Search. ChatPanel consumes the value
+ * (via its `jumpMessageId` prop) and clears it once handled.
+ */
+export function requestMessageJump(messageId: string | null) {
+  set({ jumpToMessageId: messageId });
+}
+
+/**
+ * Global search across every Space this identity belongs to (the home-screen
+ * search box). Server-side strpos match over plaintext rooms via the
+ * search_messages RPC, merged with the decrypted in-memory copies so E2E
+ * encrypted rooms remain findable. Hidden-for-me messages are excluded.
+ * Offline (or RPC not yet deployed): in-memory hits only. Never throws.
+ */
+export async function globalSearch(query: string): Promise<Message[]> {
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) return [];
+
+  const hidden = new Set(state.hiddenMessageIds);
+  const memberIds = new Set(state.spaces.map((s) => s.id));
+  const seen = new Set<string>();
+  const results: Message[] = [];
+  // Only plaintext is matchable: ciphertext (__enc1__.) is dropped both here
+  // and in SQL — but decrypted copies of those messages live in state.messages.
+  const matches = (t: string | undefined): t is string =>
+    !!t && !t.startsWith("__enc1__.") && t.toLowerCase().includes(q);
+
+  for (const m of state.messages) {
+    if (memberIds.has(m.spaceId) && !hidden.has(m.id) && matches(m.text)) {
+      seen.add(m.id);
+      results.push(m);
+    }
+  }
+
+  try {
+    const { data, error } = await supabase.rpc("search_messages", {
+      p_query: query.trim(),
+      p_user_id: state.userId,
+      p_limit: 50,
+    });
+    if (!error && Array.isArray(data)) {
+      for (const row of data as MessageRow[]) {
+        const m = toMessage(row);
+        if (seen.has(m.id) || hidden.has(m.id) || !matches(m.text)) continue;
+        seen.add(m.id);
+        results.push(m);
+      }
+    }
+  } catch {
+    /* offline / RPC unavailable: in-memory hits only */
+  }
+
+  results.sort((a, b) => b.createdAt - a.createdAt);
+  return results;
+}
+
 async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" | "authorName">) {
   const space = state.spaces.find((s) => s.id === msg.spaceId);
   if (!space) return false;
@@ -2696,6 +2760,7 @@ export function forgetIdentity() {
     spaces: [],
     messages: [],
     activeSpaceId: null,
+    jumpToMessageId: null,
     typingMap: {},
     readTimestamps: {},
     hiddenMessageIds: [],

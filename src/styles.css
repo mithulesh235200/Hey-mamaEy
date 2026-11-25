@@ -748,3 +748,19 @@
     display: none;
   }
 }
+
+/* Global-search jump: brief highlight on the message a search result reveals
+   (scrolls into view by the ChatPanel effect, then flashes for ~2.6s). */
+.message-row[data-flash="true"] {
+  animation: hme-message-flash 2.6s ease-out;
+}
+
+@keyframes hme-message-flash {
+  0%,
+  30% {
+    background-color: color-mix(in srgb, var(--primary) 22%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}

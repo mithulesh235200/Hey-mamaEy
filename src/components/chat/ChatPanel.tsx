@@ -76,6 +76,7 @@ import {
   setSpacePinnedMessage,
   setSpaceRetention,
   loadOlderMessages,
+  requestMessageJump,
   THREAD_MARKER,
   type MediaKind,
   type Message,
@@ -180,6 +181,7 @@ export function ChatPanel({
   onForward,
   onOpenSidebar,
   mobileQuickBar,
+  jumpMessageId,
 }: {
   space: Space | null;
   messages: Message[];
@@ -188,6 +190,8 @@ export function ChatPanel({
   onForward: (m: Message) => void;
   onOpenSidebar: () => void;
   mobileQuickBar: boolean;
+  /** Global-search jump target: reveal + flash this message id. */
+  jumpMessageId?: string | null;
 }) {
   const [text, setText] = useState("");
   const contacts = useContacts();
@@ -197,6 +201,25 @@ export function ChatPanel({
   const chatTitle = space ? chatTitleFor(space, contacts) : "";
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
+
+  // Global-search jump: reveal + flash the message a result points at.
+  // Retries across message loads (the target space may still be hydrating),
+  // drops any in-chat search filter that could hide it, and self-clears
+  // after 8s when the message never appears (e.g. pruned / too old).
+  useEffect(() => {
+    if (!jumpMessageId) return;
+    setSearchQuery("");
+    const safety = window.setTimeout(() => requestMessageJump(null), 8000);
+    const el = document.querySelector(`[data-message-id="${CSS.escape(jumpMessageId)}"]`);
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.setAttribute("data-flash", "true");
+      window.setTimeout(() => el.removeAttribute("data-flash"), 2600);
+      requestMessageJump(null);
+      window.clearTimeout(safety);
+    }
+    return () => window.clearTimeout(safety);
+  }, [jumpMessageId, messages]);
   const [showMobileActions, setShowMobileActions] = useState(false);
   const [showMobileAttachments, setShowMobileAttachments] = useState(false);
   const [showMobileEmojis, setShowMobileEmojis] = useState(false);

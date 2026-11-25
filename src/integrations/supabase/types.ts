@@ -342,6 +342,26 @@ export type Database = {
           isSetofReturn: true;
         };
       };
+      search_messages: {
+        Args: { p_query: string; p_user_id: string; p_limit?: number };
+        Returns: {
+          author_id: string;
+          author_name: string;
+          created_at: string;
+          data_url: string | null;
+          file_name: string | null;
+          file_size: number | null;
+          forwarded: boolean;
+          id: string;
+          kind: string;
+          mime_type: string | null;
+          read_at: string | null;
+          reply_to: string | null;
+          space_id: string;
+          text: string | null;
+          thread_parent_id: string | null;
+        }[];
+      };
       send_space_message: {
         Args: {
           p_author_id: string;

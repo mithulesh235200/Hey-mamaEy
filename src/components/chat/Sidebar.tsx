@@ -7,6 +7,7 @@ import {
   Pin,
   Plus,
   RefreshCw,
+  Search,
   Smile,
   Users,
   Check,
@@ -55,6 +56,7 @@ export function Sidebar({
   messages,
   onNavigate,
   onOpenSettings,
+  onOpenSearch,
 }: {
   userId: string;
   displayName: string;
@@ -63,6 +65,7 @@ export function Sidebar({
   messages: Message[];
   onNavigate?: () => void;
   onOpenSettings?: () => void;
+  onOpenSearch?: () => void;
 }) {
   const chatState = useChatState();
   const contacts = useContacts();
@@ -360,15 +363,26 @@ export function Sidebar({
               <p className="text-[10px] text-muted-foreground">Codes only. No phone, no email.</p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            aria-label="Open settings"
-            title="Settings"
-            className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-card text-muted-foreground transition-colors hover:bg-secondary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          >
-            <Settings className="size-4" />
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={onOpenSearch}
+              aria-label="Search all chats"
+              title="Search all chats (Ctrl+K)"
+              className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-card text-muted-foreground transition-colors hover:bg-secondary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <Search className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              aria-label="Open settings"
+              title="Settings"
+              className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-card text-muted-foreground transition-colors hover:bg-secondary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <Settings className="size-4" />
+            </button>
+          </div>
         </div>
 
         {/* Theme & Accent Customizer */}

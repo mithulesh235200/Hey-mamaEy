@@ -288,7 +288,10 @@ export function MessageBubble({
   );
 
   return (
-    <div className={`message-row group flex flex-col ${mine ? "items-end" : "items-start"}`}>
+    <div
+      data-message-id={message.id}
+      className={`message-row group flex flex-col ${mine ? "items-end" : "items-start"}`}
+    >
       {!mine && (
         <span className="mb-1 px-1 text-[11px] font-semibold text-muted-foreground">
           {message.authorName || "User"}

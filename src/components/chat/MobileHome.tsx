@@ -40,6 +40,7 @@ type MobileHomeProps = {
   tab: MobileTab;
   onTabChange: (tab: MobileTab) => void;
   onOpenSettings: () => void;
+  onOpenSearch: () => void;
   onClose?: () => void;
 };
 
@@ -56,6 +57,7 @@ export function MobileHome({
   tab,
   onTabChange,
   onOpenSettings,
+  onOpenSearch,
   onClose,
 }: MobileHomeProps) {
   const [editingName, setEditingName] = useState(displayName === "You" ? "" : displayName);
@@ -240,6 +242,15 @@ export function MobileHome({
               <ArrowLeft className="size-5" aria-hidden="true" />
             </button>
           )}
+          <button
+            type="button"
+            onClick={onOpenSearch}
+            aria-label="Search all chats"
+            title="Search all chats"
+            className="mobile-icon-button"
+          >
+            <Search className="size-5" aria-hidden="true" />
+          </button>
           <button
             type="button"
             onClick={onOpenSettings}

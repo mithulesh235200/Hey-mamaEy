@@ -5,12 +5,15 @@ import { toast } from "sonner";
 import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import { MobileHome, type MobileTab } from "@/components/chat/MobileHome";
+import { SearchOverlay } from "@/components/chat/SearchOverlay";
 import { Sidebar } from "@/components/chat/Sidebar";
 import {
   filterRetained,
   hydrate,
   joinSpace,
   markSpaceAsRead,
+  requestMessageJump,
+  setActiveSpace,
   useChatState,
   withoutHidden,
   type Message,
@@ -58,6 +61,7 @@ function Index() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileTab, setMobileTab] = useState<MobileTab>("spaces");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [mobileQuickBar, setMobileQuickBar] = useState(true);
   const backState = useRef({
     activeSpace: false,
@@ -108,6 +112,18 @@ function Index() {
       window.clearTimeout(settingsPreloadTimer);
       window.removeEventListener("heymamaey:preferences-updated", syncPreferences);
     };
+  }, []);
+
+  // Global search shortcut: Ctrl/Cmd+K toggles the search overlay.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const userIdRef = useRef(state.userId);
@@ -226,6 +242,17 @@ function Index() {
     };
   }, []);
 
+  // Global-search result click: arm the jump FIRST (so the chat reveals the
+  // message as soon as its messages load), then open the space. On mobile,
+  // close the list overlay so the opened chat is what's on screen.
+  const navigateFromSearch = (spaceId: string, messageId?: string) => {
+    if (messageId) requestMessageJump(messageId);
+    setActiveSpace(spaceId);
+    setMobileOpen(false);
+    setMobileTab("spaces");
+    setSearchOpen(false);
+  };
+
   if (!state.ready) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-background px-6 text-foreground">
@@ -254,6 +281,7 @@ function Index() {
           activeSpaceId={state.activeSpaceId}
           messages={visibleMessages}
           onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSearch={() => setSearchOpen(true)}
         />
       </div>
 
@@ -270,6 +298,7 @@ function Index() {
               setMobileOpen(true);
             }}
             mobileQuickBar={false}
+            jumpMessageId={state.jumpToMessageId}
           />
         </Suspense>
       ) : (
@@ -297,6 +326,7 @@ function Index() {
             tab={mobileTab}
             onTabChange={setMobileTab}
             onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSearch={() => setSearchOpen(true)}
             {...(activeSpace ? { onClose: () => setMobileOpen(false) } : {})}
           />
         </div>
@@ -320,6 +350,13 @@ function Index() {
             displayName={state.displayName}
           />
         </Suspense>
+      )}
+      {searchOpen && (
+        <SearchOverlay
+          onClose={() => setSearchOpen(false)}
+          spaces={state.spaces}
+          onNavigate={navigateFromSearch}
+        />
       )}
     </main>
   );
