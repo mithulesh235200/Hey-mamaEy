@@ -48,6 +48,13 @@ import {
   type Theme,
 } from "@/lib/theme";
 import { enablePushForUser, disableWebPush } from "@/lib/push";
+import {
+  clearRevealPasscode,
+  hasRevealPasscode,
+  setRevealPasscode,
+  validateRevealPasscode,
+  verifyRevealPasscode,
+} from "@/lib/revealPasscode";
 
 export type { Accent, Theme };
 export type Density = "comfortable" | "compact";
@@ -82,6 +89,13 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
 
   // Permanent Secret Access Key State
   const [showPermanentKey, setShowPermanentKey] = useState(false);
+  // Reveal gate: null = idle (key hidden), "set" = choose a passcode the
+  // first time, "verify" = enter the existing passcode before every reveal.
+  const [passcodePrompt, setPasscodePrompt] = useState<null | "set" | "verify">(null);
+  const [passInput, setPassInput] = useState("");
+  const [passConfirm, setPassConfirm] = useState("");
+  const [passError, setPassError] = useState("");
+  const [passBusy, setPassBusy] = useState(false);
   const [restoreInput, setRestoreInput] = useState("");
   const [restoreToken, setRestoreToken] = useState("");
   const [showRestoreForm, setShowRestoreForm] = useState(false);
@@ -90,6 +104,9 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
   const permanentKey = getPermanentKey();
 
   const handleCopyPermanentKey = async () => {
+    // Belt and braces: the blur overlay already blocks these buttons, but the
+    // handler itself must refuse to copy a key the passcode hasn't revealed.
+    if (!showPermanentKey) return;
     try {
       await navigator.clipboard.writeText(permanentKey);
       toast.success("Permanent Access Key Copied!", {
@@ -101,6 +118,7 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
   };
 
   const handleCopyBackup = async () => {
+    if (!showPermanentKey) return;
     try {
       const payload = await getBackupPayload();
       await navigator.clipboard.writeText(payload);
@@ -115,6 +133,84 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
   };
 
   const [isRestoring, setIsRestoring] = useState(false);
+
+  /**
+   * Entry point for BOTH reveal buttons. The key never enters the DOM until
+   * the passcode for this device is satisfied: first time → choose one,
+   * every time after → verify the stored hash.
+   */
+  const requestReveal = () => {
+    setPassInput("");
+    setPassConfirm("");
+    setPassError("");
+    setPasscodePrompt(hasRevealPasscode() ? "verify" : "set");
+  };
+
+  const hideKey = () => {
+    setShowPermanentKey(false);
+    setPasscodePrompt(null);
+    setPassInput("");
+    setPassConfirm("");
+    setPassError("");
+  };
+
+  const handleSetPasscode = async () => {
+    const problem = validateRevealPasscode(passInput);
+    if (problem) {
+      setPassError(problem);
+      return;
+    }
+    if (passInput !== passConfirm) {
+      setPassError("Passcodes don't match.");
+      return;
+    }
+    setPassBusy(true);
+    try {
+      await setRevealPasscode(passInput);
+      setPasscodePrompt(null);
+      setShowPermanentKey(true);
+      toast.success("Passcode set", {
+        description: "Your permanent key now requires it to reveal.",
+      });
+    } finally {
+      setPassBusy(false);
+    }
+  };
+
+  const handleVerifyPasscode = async () => {
+    if (!passInput) {
+      setPassError("Enter your passcode.");
+      return;
+    }
+    setPassBusy(true);
+    try {
+      const ok = await verifyRevealPasscode(passInput);
+      if (ok) {
+        setPasscodePrompt(null);
+        setShowPermanentKey(true);
+      } else {
+        setPassError("Incorrect passcode.");
+      }
+    } finally {
+      setPassBusy(false);
+    }
+  };
+
+  const handleForgotPasscode = () => {
+    if (
+      !window.confirm(
+        "Remove the reveal passcode on this device?\n\nAnyone who can open this device's settings will then be able to reveal your permanent key without it.",
+      )
+    ) {
+      return;
+    }
+    clearRevealPasscode();
+    setPasscodePrompt("set");
+    setPassInput("");
+    setPassConfirm("");
+    setPassError("");
+    toast.info("Passcode removed — set a new one to protect your key.");
+  };
 
   const handleRestoreAccount = async () => {
     const key = restoreInput.trim();
@@ -183,11 +279,18 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
   useEffect(() => {
     if (!open) return;
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      // Escape unwinds one layer at a time: prompt first, then the modal.
+      if (passcodePrompt !== null) {
+        setPasscodePrompt(null);
+        setPassError("");
+        return;
+      }
+      onClose();
     };
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [onClose, open]);
+  }, [onClose, open, passcodePrompt]);
 
   useEffect(() => {
     applyTheme(theme); // applies, persists, and dispatches the update event
@@ -741,7 +844,7 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
                       </p>
                     </div>
                     <button
-                      onClick={() => setShowPermanentKey(!showPermanentKey)}
+                      onClick={() => (showPermanentKey ? hideKey() : requestReveal())}
                       className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted transition-colors shrink-0"
                     >
                       {showPermanentKey ? (
@@ -762,17 +865,130 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
                       <div className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-2xl bg-background/85 backdrop-blur-md p-4 text-center">
                         <Key className="size-6 text-primary mb-1 opacity-80" />
                         <span className="text-xs font-semibold text-foreground">
-                          Permanent Secret Key Hidden
+                          {passcodePrompt === "set"
+                            ? "Set a reveal passcode"
+                            : passcodePrompt === "verify"
+                              ? "Enter your passcode"
+                              : "Permanent Secret Key Hidden"}
                         </span>
                         <p className="text-[11px] text-muted-foreground mt-0.5 mb-2 max-w-[260px]">
-                          Never share your secret access key with anyone.
+                          {passcodePrompt
+                            ? "This passcode protects your key on this device."
+                            : "Never share your secret access key with anyone."}
                         </p>
-                        <button
-                          onClick={() => setShowPermanentKey(true)}
-                          className="rounded-xl bg-primary px-3.5 py-1.5 text-xs font-bold text-primary-foreground hover:opacity-90 transition-opacity"
-                        >
-                          Reveal Permanent Key
-                        </button>
+
+                        {passcodePrompt === null && (
+                          <button
+                            onClick={requestReveal}
+                            className="rounded-xl bg-primary px-3.5 py-1.5 text-xs font-bold text-primary-foreground hover:opacity-90 transition-opacity"
+                          >
+                            Reveal Permanent Key
+                          </button>
+                        )}
+
+                        {passcodePrompt === "set" && (
+                          <div className="w-full max-w-[260px] space-y-2">
+                            <input
+                              type="password"
+                              value={passInput}
+                              onChange={(e) => {
+                                setPassInput(e.target.value);
+                                setPassError("");
+                              }}
+                              placeholder="New passcode (4+ chars)"
+                              aria-label="New reveal passcode"
+                              autoComplete="new-password"
+                              maxLength={64}
+                              className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                            />
+                            <input
+                              type="password"
+                              value={passConfirm}
+                              onChange={(e) => {
+                                setPassConfirm(e.target.value);
+                                setPassError("");
+                              }}
+                              onKeyDown={(e) => e.key === "Enter" && void handleSetPasscode()}
+                              placeholder="Repeat passcode"
+                              aria-label="Confirm reveal passcode"
+                              autoComplete="new-password"
+                              maxLength={64}
+                              className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                            />
+                            {passError && (
+                              <p
+                                role="alert"
+                                className="text-[11px] font-semibold text-destructive"
+                              >
+                                {passError}
+                              </p>
+                            )}
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => void handleSetPasscode()}
+                                disabled={passBusy}
+                                className="flex-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground hover:opacity-90 transition-opacity disabled:opacity-50"
+                              >
+                                {passBusy ? "Setting…" : "Set Passcode"}
+                              </button>
+                              <button
+                                onClick={() => setPasscodePrompt(null)}
+                                className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {passcodePrompt === "verify" && (
+                          <div className="w-full max-w-[260px] space-y-2">
+                            <input
+                              type="password"
+                              value={passInput}
+                              onChange={(e) => {
+                                setPassInput(e.target.value);
+                                setPassError("");
+                              }}
+                              onKeyDown={(e) => e.key === "Enter" && void handleVerifyPasscode()}
+                              placeholder="Passcode"
+                              aria-label="Reveal passcode"
+                              autoComplete="current-password"
+                              maxLength={64}
+                              autoFocus
+                              className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                            />
+                            {passError && (
+                              <p
+                                role="alert"
+                                className="text-[11px] font-semibold text-destructive"
+                              >
+                                {passError}
+                              </p>
+                            )}
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => void handleVerifyPasscode()}
+                                disabled={passBusy}
+                                className="flex-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground hover:opacity-90 transition-opacity disabled:opacity-50"
+                              >
+                                {passBusy ? "Checking…" : "Unlock Key"}
+                              </button>
+                              <button
+                                onClick={() => setPasscodePrompt(null)}
+                                className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                            <button
+                              onClick={handleForgotPasscode}
+                              className="text-[11px] font-medium text-muted-foreground underline hover:text-foreground transition-colors"
+                            >
+                              Forgot passcode?
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -782,7 +998,10 @@ export function SettingsModal({ open, onClose, userId, displayName }: SettingsMo
                           Your Permanent Access Number
                         </span>
                         <span className="font-mono text-base font-bold text-primary tracking-widest block mt-0.5">
-                          {permanentKey}
+                          {/* Never render the real key while hidden: the blur
+                              overlay only hides it visually — the DOM (and
+                              any script or screen reader) could still read it. */}
+                          {showPermanentKey ? permanentKey : "••••••••-•••••••-•••••••"}
                         </span>
                       </div>
                     </div>
