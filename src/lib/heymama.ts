@@ -1877,18 +1877,38 @@ export async function joinSpace(rawCode: string, password = ""): Promise<Space |
  * BOTH identities are pre-registered as members, so the friend's device
  * discovers the room through the membership sync even when no push invite
  * arrives. Both sides therefore always land on the same room code.
+ *
+ * Stranger gate (message requests): a NEW thread is only created when the
+ * recipient has consented (dm_approvals — uploaded when they save you in
+ * People, or when they accept a request). Otherwise the server queues a
+ * dm_requests row and this resolves {status:'requested'} — no membership,
+ * no room, nothing on their side until they approve.
  * Throws on RPC failure so callers can fall back to the legacy flow.
  */
-export async function getOrCreateDirectSpace(otherId: string, name: string): Promise<Space | null> {
+export type DirectOpenResult = { status: "open"; space: Space } | { status: "requested" };
+
+export async function getOrCreateDirectSpace(
+  otherId: string,
+  name: string,
+): Promise<DirectOpenResult | null> {
   const me = state.userId || prefs.userId || "";
   if (!me || !otherId.trim()) return null;
   const { data, error } = await supabase.rpc("get_or_create_direct_space", {
     p_me: me,
     p_other: otherId.trim(),
     p_name: name,
+    // What the recipient sees in their Requests inbox: OUR name for ourselves
+    // (they have no saved nickname for us — we may be a stranger to them).
+    p_from_name: (state.displayName || "").slice(0, 40),
   });
   if (error) throw new Error(error.message);
-  const row = (Array.isArray(data) ? data[0] : data) as SpaceRow | null;
+  const payload = (Array.isArray(data) ? data[0] : data) as {
+    status?: string;
+    space?: SpaceRow | null;
+  } | null;
+  if (!payload) return null;
+  if (payload.status !== "open") return { status: "requested" };
+  const row = payload.space;
   if (!row || !row.id || !row.code) return null;
 
   const space = toSpace(row);
@@ -1904,7 +1924,7 @@ export async function getOrCreateDirectSpace(otherId: string, name: string): Pro
   });
   markSpaceActive(space.code);
   persistOfflineSnapshot();
-  return space;
+  return { status: "open", space };
 }
 
 /** Owner-only: set/change/remove the room password (empty removes). */

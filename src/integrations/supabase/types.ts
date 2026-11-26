@@ -313,20 +313,28 @@ export type Database = {
         }[];
       };
       get_or_create_direct_space: {
-        Args: { p_me: string; p_name?: string; p_other: string };
+        Args: { p_from_name?: string; p_me: string; p_name?: string; p_other: string };
+        /** Envelope: {status:'open', space:{…}} | {status:'requested'} — see dm_requests migration. */
+        Returns: Json;
+      };
+      record_dm_approval: {
+        Args: { p_me: string; p_other: string };
+        Returns: boolean;
+      };
+      list_dm_requests: {
+        Args: { p_me: string };
         Returns: {
-          code: string;
           created_at: string;
-          id: string;
-          name: string;
-          owner_id: string | null;
-        };
-        SetofOptions: {
-          from: "*";
-          to: "spaces";
-          isOneToOne: true;
-          isSetofReturn: false;
-        };
+          from_name: string;
+          pair_key: string;
+          request_name: string;
+          requester: string;
+        }[];
+      };
+      respond_dm_request: {
+        Args: { p_accept: boolean; p_me: string; p_other: string };
+        /** Same envelope as get_or_create_direct_space, or {status:'declined'|'none'}. */
+        Returns: Json;
       };
       unregister_space_member: {
         Args: { p_code: string; p_user_id: string };

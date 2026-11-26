@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { Hash, MessageSquare, Search, UserRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { globalSearch, type Message, type Space } from "@/lib/heymama";
-import { chatTitleFor, openDirectChat, useContacts, type Contact } from "@/lib/contacts";
+import {
+  chatTitleFor,
+  openDirectChat,
+  sendDmRequestPush,
+  useContacts,
+  type Contact,
+} from "@/lib/contacts";
 
 type SearchOverlayProps = {
   onClose: () => void;
@@ -82,9 +88,18 @@ export function SearchOverlay({ onClose, spaces, onNavigate }: SearchOverlayProp
     active && !loading && !matchedSpaces.length && !matchedContacts.length && !messageHits.length;
 
   const openContact = (c: Contact) => {
-    void openDirectChat(c.id).then((s) => {
-      if (s) onNavigate(s.id);
-      else toast.error("Could not open chat", { description: "Try again from People." });
+    void openDirectChat(c.id).then((result) => {
+      if (result && result.status === "open") {
+        onNavigate(result.space.id);
+      } else if (result && result.status === "requested") {
+        toast.info(`Request sent to ${c.nickname}`, {
+          description: "They'll review it under People → Requests.",
+          duration: 6000,
+        });
+        void sendDmRequestPush(c.id).catch(() => undefined);
+      } else {
+        toast.error("Could not open chat", { description: "Try again from People." });
+      }
       onClose();
     });
   };

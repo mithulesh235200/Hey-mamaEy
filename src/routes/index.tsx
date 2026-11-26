@@ -19,6 +19,7 @@ import {
   type Message,
 } from "@/lib/heymama";
 import { flushPushToken, initPushNotifications } from "@/lib/push";
+import { dmRequestStore, refreshDmRequests } from "@/lib/dmRequests";
 
 const ChatPanel = lazy(() =>
   import("@/components/chat/ChatPanel").then((m) => ({ default: m.ChatPanel })),
@@ -163,6 +164,35 @@ function Index() {
   useEffect(() => {
     if (state.userId) void flushPushToken(state.userId);
   }, [state.userId]);
+
+  // Stranger message requests: poll the inbox (and on reconnect) so the
+  // People → Requests queue stays live, and announce genuinely new arrivals.
+  // Requests from saved contacts are auto-accepted inside refreshDmRequests
+  // before we see them, so they never toast here.
+  useEffect(() => {
+    const known = new Set(dmRequestStore.get().map((r) => r.requester));
+    const poll = () => {
+      void refreshDmRequests(true).then((list) => {
+        const fresh = list.filter((r) => !known.has(r.requester));
+        known.clear();
+        for (const r of list) known.add(r.requester);
+        const first = fresh[0];
+        if (first) {
+          toast.info(first.name ? `Message request from ${first.name}` : "New message request", {
+            description: "Open People to accept or decline.",
+            duration: 6000,
+          });
+        }
+      });
+    };
+    poll();
+    const timer = window.setInterval(poll, 20000);
+    window.addEventListener("online", poll);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("online", poll);
+    };
+  }, []);
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;

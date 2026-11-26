@@ -5,6 +5,7 @@
 
 import { useSyncExternalStore } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import type { Space } from "./heymama";
 
 export type Contact = {
   /** Friend's identity code, normalized uppercase (e.g. MAMA-1234-EYAB). */
@@ -167,6 +168,21 @@ export function mergeContacts(
   return added;
 }
 
+/**
+ * My consent: "this identity may open a 1:1 thread with me" (server-side
+ * dm_approvals). Fire-and-forget on save — if the upload fails the request
+ * queue still works: their first tap queues a request my side auto-accepts
+ * because they're in my contacts.
+ */
+function recordApproval(otherId: string, ownId?: string): void {
+  const me = (ownId ?? "").trim();
+  if (!me || !otherId) return;
+  supabase.rpc("record_dm_approval", { p_me: me, p_other: otherId }).then(
+    () => undefined,
+    () => undefined,
+  );
+}
+
 export function addContact(
   rawId: string,
   nickname: string,
@@ -182,6 +198,7 @@ export function addContact(
   if (contacts.some((c) => c.id === id)) return { ok: false, error: "Already in your people." };
   if (contacts.length >= MAX_CONTACTS) return { ok: false, error: "People list is full." };
   set([...contacts, { id, nickname: name, addedAt: Date.now() }]);
+  recordApproval(id, ownId);
   return { ok: true };
 }
 
@@ -254,18 +271,29 @@ export function chatTitleFor(space: { code: string; name: string }, contacts: Co
  * ONE direct thread per identity pair, so whichever side opens the chat
  * first creates THE shared room and both sides always land on the same
  * code (the friend is pre-registered as a member and discovers the room
- * through the membership sync — no push invite needed). The legacy
- * per-contact link remains as the offline / pre-migration fallback.
- * Never throws (returns null).
+ * through the membership sync — no push invite needed).
+ *
+ * Stranger gate: when the other identity hasn't consented to us yet, the
+ * server queues a REQUEST instead and this resolves
+ * {status:'requested'} — the caller should say so (and may push-notify
+ * them); nothing exists on their side until they accept in People.
+ * The legacy per-contact link remains as the offline / pre-migration
+ * fallback. Never throws (returns null on failure).
  */
-export async function openDirectChat(contactId: string) {
+export type OpenDirectResult =
+  { status: "open"; space: Space } | { status: "requested"; target: string; name: string };
+
+export async function openDirectChat(contactId: string): Promise<OpenDirectResult | null> {
   const contact = getContact(contactId);
   if (!contact) return null;
   const hm = await import("./heymama");
   try {
     const direct = await hm.getOrCreateDirectSpace(contact.id, contact.nickname);
     if (direct) {
-      if (contact.spaceCode !== direct.code) linkContactSpace(contact.id, direct.code);
+      if (direct.status === "requested") {
+        return { status: "requested", target: contact.id, name: contact.nickname };
+      }
+      if (contact.spaceCode !== direct.space.code) linkContactSpace(contact.id, direct.space.code);
       return direct;
     }
   } catch {
@@ -277,11 +305,11 @@ export async function openDirectChat(contactId: string) {
     if (local) {
       hm.setActiveSpace(local.id);
       hm.markSpaceAsRead(local.id);
-      return local;
+      return { status: "open", space: local };
     }
     try {
       const joined = await hm.joinSpace(contact.spaceCode);
-      if (joined) return joined;
+      if (joined) return { status: "open", space: joined };
     } catch {
       /* linked code dead (locked/banned/deleted) — create a fresh one below */
     }
@@ -289,7 +317,7 @@ export async function openDirectChat(contactId: string) {
   try {
     const created = await hm.createSpace(contact.nickname, { mode: "private" });
     if (created) linkContactSpace(contact.id, created.code);
-    return created;
+    return created ? { status: "open", space: created } : null;
   } catch {
     return null;
   }
@@ -330,6 +358,35 @@ export async function sendFriendInvite(opts: {
     // to Supabase, wrong project URL, or CORS). FunctionsHttpError = the
     // function ran but returned an error (missing secrets, bad input, etc.).
     const typedErr = new Error(msg);
+    (typedErr as { kind?: string }).kind =
+      error.name === "FunctionsFetchError" ? "network" : "function";
+    throw typedErr;
+  }
+  const sent = Number((data as { sent?: unknown } | null)?.sent ?? 0);
+  return { sent: Number.isFinite(sent) ? sent : 0 };
+}
+
+/**
+ * Push "X wants to chat" to a stranger's devices after our DM tap was
+ * queued as a request (see openDirectChat). Resolves {sent: n}; n === 0
+ * means no reachable push device — they'll still see the request in
+ * People → Requests on their next poll. Throws on bad input / network.
+ */
+export async function sendDmRequestPush(targetUserId: string): Promise<InviteResult> {
+  const target = normalizeContactId(targetUserId);
+  if (!target) throw new Error("Invalid identity code.");
+  const hm = await import("./heymama");
+  const me = hm.store.get();
+  if (!me.userId) throw new Error("Identity not ready yet.");
+  const { data, error } = await supabase.functions.invoke("dm-request", {
+    body: {
+      target_user_id: target,
+      from_user_id: me.userId,
+      from_name: (me.displayName || "A friend").slice(0, 40),
+    },
+  });
+  if (error) {
+    const typedErr = new Error(error.message || "Request notification failed.");
     (typedErr as { kind?: string }).kind =
       error.name === "FunctionsFetchError" ? "network" : "function";
     throw typedErr;
