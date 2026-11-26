@@ -4,6 +4,7 @@ import {
   CheckCheck,
   Copy,
   Download,
+  EyeOff,
   FileText,
   Forward,
   MoreVertical,
@@ -48,6 +49,8 @@ function bodyWithoutQuote(text: string): string {
 
 /** One-line preview of a quoted parent message (mirrors ChatPanel's replySnippet). */
 function quoteSnippet(m: Message): string {
+  // View-once media is never quoted by filename or payload — name the kind only.
+  if (m.viewOnce) return m.kind === "video" ? "Video" : "Photo";
   const body = bodyWithoutQuote(m.text ?? "");
   const raw = body
     ? body.length > 60
@@ -135,6 +138,7 @@ export function MessageBubble({
   mine,
   onForward,
   onOpenImage,
+  onOpenViewOnce,
   onPin,
   onStar,
   onReply,
@@ -152,6 +156,11 @@ export function MessageBubble({
   mine: boolean;
   onForward: (m: Message) => void;
   onOpenImage: (url: string) => void;
+  /**
+   * Opens a view-once photo/video. The parent records the view with the
+   * server FIRST (so it can never be opened again) and only then shows it.
+   */
+  onOpenViewOnce?: (m: Message) => void;
   onPin: (m: Message) => void;
   onStar: (m: Message) => void;
   onReply: (m: Message) => void;
@@ -282,6 +291,35 @@ export function MessageBubble({
     ) ?? [];
   const myVote = currentUserId ? latestVotes.get(currentUserId) : undefined;
 
+  // View-once media renders as a sealed placeholder instead of the media:
+  // one tap, one viewing, then the payload is erased (consume_view_once).
+  const viewOnceMedia = message.viewOnce === true;
+  const iOpenedViewOnce = Boolean(currentUserId && message.viewedBy?.includes(currentUserId));
+  const canOpenViewOnce =
+    viewOnceMedia &&
+    !mine &&
+    !iOpenedViewOnce &&
+    Boolean(message.dataUrl) &&
+    Boolean(onOpenViewOnce);
+  const viewOnceKindLabel =
+    message.kind === "video" ? "Video" : message.kind === "image" ? "Photo" : "Attachment";
+  const viewOnceStatus = mine
+    ? (message.viewedBy?.length ?? 0) > 0
+      ? "Opened"
+      : "View once · opens one time"
+    : iOpenedViewOnce
+      ? "Opened"
+      : message.dataUrl
+        ? "Tap to view once"
+        : "No longer available";
+  const viewOnceTileClass = `flex w-full min-w-36 flex-col items-center gap-1.5 rounded-xl border border-dashed px-5 py-4 text-center transition-colors ${
+    mine ? "border-primary-foreground/40" : "border-primary/40"
+  } ${
+    canOpenViewOnce
+      ? `cursor-pointer ${mine ? "hover:bg-primary-foreground/10" : "hover:bg-secondary"}`
+      : "cursor-default opacity-85"
+  }`;
+
   // Server-backed reactions (synced across members/devices).
   const reactionEntries = Object.entries(message.reactions ?? {}).filter(
     ([, value]) => value.count > 0,
@@ -375,7 +413,35 @@ export function MessageBubble({
             </div>
           )}
 
-          {message.kind === "image" && message.dataUrl && (
+          {viewOnceMedia && (
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => canOpenViewOnce && onOpenViewOnce?.(message)}
+                disabled={!canOpenViewOnce}
+                aria-label={
+                  canOpenViewOnce
+                    ? `Open ${viewOnceKindLabel.toLowerCase()} once`
+                    : `${viewOnceKindLabel} — view once`
+                }
+                className={viewOnceTileClass}
+              >
+                <span
+                  className={`rounded-full p-2.5 ${
+                    mine ? "bg-primary-foreground/15" : "bg-primary/15"
+                  }`}
+                >
+                  <EyeOff
+                    className={`size-5 ${mine ? "text-primary-foreground" : "text-primary"}`}
+                  />
+                </span>
+                <span className="text-xs font-semibold">{viewOnceKindLabel}</span>
+                <span className="text-[10px] font-medium opacity-80">{viewOnceStatus}</span>
+              </button>
+            </div>
+          )}
+
+          {message.kind === "image" && message.dataUrl && !message.viewOnce && (
             <div className="space-y-1">
               <button
                 type="button"
@@ -401,7 +467,7 @@ export function MessageBubble({
             </div>
           )}
 
-          {message.kind === "video" && message.dataUrl && (
+          {message.kind === "video" && message.dataUrl && !message.viewOnce && (
             <div className="space-y-1">
               <video
                 src={message.dataUrl}

@@ -54,6 +54,17 @@ export type Message = {
   verified?: boolean | null;
   /** Server-backed reactions: emoji -> { count, mine }. Synced across devices. */
   reactions?: Record<string, { count: number; mine: boolean }>;
+  /**
+   * View-once media: opens exactly once per viewer, then the payload is
+   * erased server-side (see `consume_view_once`). Only image/video messages.
+   */
+  viewOnce?: boolean;
+  /**
+   * User ids that already opened this view-once message. Drives the
+   * "Opened" state on every device — one member opening it never burns
+   * another member's copy.
+   */
+  viewedBy?: string[];
 };
 
 /** Per-Space auto-destruct (disappearing messages) policy. */
@@ -795,6 +806,8 @@ type MessageRow = {
   sig?: string | null;
   reply_to?: string | null;
   thread_parent_id?: string | null;
+  view_once?: boolean | null;
+  viewed_by?: string[] | null;
   created_at: string;
 };
 
@@ -877,6 +890,14 @@ const toMessage = (r: MessageRow): Message => {
     }
   }
 
+  // View-once payloads this user can never open again — their own sent copy
+  // (a receipt, not a viewer) or one they already opened — are dropped right
+  // here at decode time, so the media never lands in state or the offline
+  // snapshot. The "Opened" state is driven by viewed_by instead.
+  const dropViewOncePayload =
+    r.view_once === true &&
+    (r.author_id === state.userId || (r.viewed_by ?? []).includes(state.userId));
+
   return {
     id: r.id,
     spaceId: r.space_id,
@@ -884,7 +905,7 @@ const toMessage = (r: MessageRow): Message => {
     authorName: r.author_name,
     kind,
     ...(text !== undefined && { text }),
-    ...(r.data_url !== null && { dataUrl: r.data_url }),
+    ...(r.data_url !== null && !dropViewOncePayload && { dataUrl: r.data_url }),
     ...(fileName !== undefined && kind !== "p2p_file" && { fileName }),
     ...(fileSize !== undefined && kind !== "p2p_file" && { fileSize }),
     ...(r.mime_type !== null && { mimeType: r.mime_type }),
@@ -901,6 +922,8 @@ const toMessage = (r: MessageRow): Message => {
     ...(p2pFileSize !== undefined && { p2pFileSize }),
     ...(p2pMimeType !== undefined && { p2pMimeType }),
     ...(typeof r.sig === "string" && r.sig && { sig: r.sig }),
+    ...(r.view_once === true && { viewOnce: true }),
+    ...(r.viewed_by !== undefined && { viewedBy: r.viewed_by ?? [] }),
     createdAt: new Date(r.created_at).getTime(),
   };
 };
@@ -1089,6 +1112,10 @@ async function decryptIfNeeded(msg: Message, code: string): Promise<Message> {
       // marker re-parse below instead of promoting it to one.
       ...(msg.threadParentId !== undefined &&
         !msg.threadFromMarker && { thread_parent_id: msg.threadParentId }),
+      // View-once state is per-message, not per-payload: keep it when the
+      // body is re-decoded from the decrypted wire text.
+      ...(msg.viewOnce !== undefined && { view_once: msg.viewOnce }),
+      ...(msg.viewedBy !== undefined && { viewed_by: msg.viewedBy }),
       created_at: new Date(msg.createdAt).toISOString(),
     } as MessageRow);
     return { ...decoded, id: msg.id, spaceId: msg.spaceId, createdAt: msg.createdAt };
@@ -2254,12 +2281,23 @@ async function insertMessage(msg: Omit<Message, "id" | "createdAt" | "authorId" 
       p_forwarded: msg.forwarded ?? false,
       ...(msg.replyToId !== undefined && { p_reply_to: msg.replyToId }),
       ...(msg.threadParentId !== undefined && { p_thread_parent_id: msg.threadParentId }),
+      // Only ever sent for a view-once message, so every ordinary send keeps
+      // working against the pre-migration signature (see the migration header).
+      ...(msg.viewOnce && { p_view_once: true }),
       ...(p_password_hash !== null && { p_password_hash }),
       ...(p_sig !== null && { p_sig }),
     });
     const row = (Array.isArray(data) ? data[0] : data) as MessageRow | null;
     if (error || !row) {
-      lastSendError = error ? (classifySendError(error.message ?? "") ?? "SEND_FAILED") : null;
+      const errMsg = error?.message ?? "";
+      // A "function not found" can only happen on a view-once send (that is
+      // the sole call carrying p_view_once) — name the real fix instead of
+      // showing a generic "check your connection" failure.
+      lastSendError = error
+        ? msg.viewOnce && /Could not find the function|PGRST202/.test(errMsg)
+          ? "VIEW_ONCE_UNAVAILABLE"
+          : (classifySendError(errMsg) ?? "SEND_FAILED")
+        : null;
       return false;
     }
 
@@ -2310,6 +2348,9 @@ export async function forwardMessage(message: Message, spaceId: string) {
   if (message.locked) return false;
   // Never forward raw ciphertext: only decrypted plaintext is re-encrypted for the target room.
   if (message.text?.startsWith("__enc1__.")) return false;
+  // A consumed view-once message has nothing left to forward, and a fresh
+  // copy stays view-once — privacy doesn't expire on forward.
+  if (message.viewOnce && !message.dataUrl) return false;
   return insertMessage({
     spaceId,
     kind: message.kind,
@@ -2325,6 +2366,7 @@ export async function forwardMessage(message: Message, spaceId: string) {
     ...(message.p2pFileName !== undefined && { p2pFileName: message.p2pFileName }),
     ...(message.p2pFileSize !== undefined && { p2pFileSize: message.p2pFileSize }),
     ...(message.p2pMimeType !== undefined && { p2pMimeType: message.p2pMimeType }),
+    ...(message.viewOnce && { viewOnce: true }),
     forwarded: true,
   });
 }
@@ -2388,6 +2430,78 @@ export async function deleteMessage(messageId: string, spaceId: string) {
   set({ messages: state.messages.filter((item) => item.id !== messageId) });
   persistOfflineSnapshot();
   return true;
+}
+
+/** Outcome of a single view-once open attempt. */
+export type ViewOnceOpenResult =
+  /** The view was recorded — `url` is live for this one and only view. */
+  | { status: "opened"; url: string }
+  /** This user already opened it (here or on another device): nothing to show. */
+  | { status: "already" }
+  /** The room could not be reached, or the consume RPC is unavailable. */
+  | { status: "error" };
+
+/**
+ * Opens a view-once photo/video for the local user — exactly once, ever.
+ *
+ * `consume_view_once` records the viewer in `messages.viewed_by` BEFORE
+ * handing anything back, so the same payload can never be opened again from
+ * any device. Once every current member has opened it the server also erases
+ * the payload from the row.
+ *
+ * The local copy is dropped from state (and therefore from the offline
+ * snapshot) the moment the view is recorded.
+ */
+export async function consumeViewOnce(
+  spaceId: string,
+  messageId: string,
+): Promise<ViewOnceOpenResult> {
+  const space = state.spaces.find((item) => item.id === spaceId);
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!space || !message) return { status: "error" };
+
+  // Nothing left to show locally (already opened, or it was never here).
+  const localUrl = message.dataUrl;
+  if (!message.viewOnce || !localUrl) return { status: "already" };
+  // The sender's copy is a receipt — it can never be opened, by anyone.
+  if (message.authorId === state.userId) return { status: "error" };
+  if (message.viewedBy?.includes(state.userId)) return { status: "already" };
+
+  try {
+    const { getRoomPassword, hashRoomPassword } = await import("./roomCrypto");
+    const pw = getRoomPassword(space.code).trim();
+    const p_password_hash = pw ? await hashRoomPassword(pw) : null;
+    const { data, error } = await supabase.rpc("consume_view_once", {
+      p_code: space.code,
+      p_message_id: messageId,
+      p_reader_id: state.userId,
+      ...(p_password_hash !== null && { p_password_hash }),
+    });
+    if (error) return { status: "error" };
+    // '' = refused (already opened elsewhere / not view-once). Any other
+    // answer — including null, when the payload was already erased
+    // server-side — means this view is recorded: show the local copy.
+    if (data === "") return { status: "already" };
+    markViewOnceOpened(messageId);
+    return { status: "opened", url: localUrl };
+  } catch {
+    return { status: "error" };
+  }
+}
+
+/** Stamps the local user as a viewer and drops the payload from state. */
+function markViewOnceOpened(messageId: string): void {
+  const userId = state.userId;
+  const next = state.messages.map((item) => {
+    if (item.id !== messageId) return item;
+    const { dataUrl: _consumed, ...rest } = item;
+    return {
+      ...rest,
+      viewedBy: [...new Set([...(item.viewedBy ?? []), userId])],
+    };
+  });
+  set({ messages: next });
+  persistOfflineSnapshot();
 }
 
 /**

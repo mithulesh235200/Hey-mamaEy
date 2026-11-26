@@ -46,6 +46,7 @@ import {
   Trash2,
   Bell,
   BellOff,
+  EyeOff,
   WifiOff,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -59,6 +60,7 @@ import {
   hideMessageForMe,
   sendMessage,
   getLastSendError,
+  consumeViewOnce,
   leaveSpace,
   markSpaceMessagesRead,
   markSpaceAsRead,
@@ -99,6 +101,14 @@ const InAppCall = lazy(() =>
 );
 
 const MAX_BYTES = 20 * 1024 * 1024; // 20 MB server-upload limit (larger files: use P2P Direct Share)
+/**
+ * View-once media travels INLINE inside the message row (E2E encrypted)
+ * instead of to the public storage bucket — that is what makes "then it's
+ * gone" real. The server caps the sealed payload at 18.1M characters, and
+ * sealing adds ~60, so 18M of plaintext is the safe ceiling: refuse anything
+ * bigger BEFORE the send rather than failing after encryption.
+ */
+const MAX_VIEW_ONCE_DATA_URL_CHARS = 18_000_000;
 const POLL_VOTE_PREFIX = "__poll_vote__:";
 const QUOTE_PREFIX = "> Replying to @";
 
@@ -224,7 +234,27 @@ export function ChatPanel({
   const [showMobileAttachments, setShowMobileAttachments] = useState(false);
   const [showMobileEmojis, setShowMobileEmojis] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  // True while `lightbox` shows view-once media: no download button, no
+  // filters — that single viewing IS the feature.
+  const [lightboxViewOnce, setLightboxViewOnce] = useState(false);
+  // The lightbox also plays view-once videos (normal videos stay inline).
+  const [lightboxIsVideo, setLightboxIsVideo] = useState(false);
   const [activePhotoFilter, setActivePhotoFilter] = useState<PhotoFilter>("none");
+  // Arms the NEXT photo/video send as view-once (cleared once it goes out).
+  const [viewOnce, setViewOnce] = useState(false);
+  // One consume at a time, so a double tap can't race two open attempts.
+  const [openingViewOnce, setOpeningViewOnce] = useState(false);
+  const openLightbox = (url: string, isViewOnce = false, isVideo = false) => {
+    setLightbox(url);
+    setLightboxViewOnce(isViewOnce);
+    setLightboxIsVideo(isVideo);
+  };
+  const closeLightbox = () => {
+    setLightbox(null);
+    setLightboxViewOnce(false);
+    setLightboxIsVideo(false);
+    setActivePhotoFilter("none");
+  };
   const [recording, setRecording] = useState(false);
   const [recordSecs, setRecordSecs] = useState(0);
   const [editing, setEditing] = useState<Message | null>(null);
@@ -827,8 +857,7 @@ export function ChatPanel({
       if (showSoundboard) return setShowSoundboard(false);
       if (activeThreadMessage) return setActiveThreadMessage(null);
       if (lightbox) {
-        setLightbox(null);
-        setActivePhotoFilter("none");
+        closeLightbox();
         return;
       }
       if (showPollModal) return setShowPollModal(false);
@@ -1131,7 +1160,9 @@ export function ChatPanel({
   );
 
   const mediaMessages = useMemo(
-    () => messages.filter((m) => m.dataUrl && m.kind !== "text"),
+    // View-once media never browses in the gallery: it exists to be opened
+    // once from the chat, not as a persistent thumbnail.
+    () => messages.filter((m) => m.dataUrl && m.kind !== "text" && !m.viewOnce),
     [messages],
   );
 
@@ -1251,6 +1282,14 @@ export function ChatPanel({
       });
       return;
     }
+    if (reason === "VIEW_ONCE_UNAVAILABLE") {
+      // Only a view-once send carries p_view_once, so a "function not found"
+      // can only mean this migration hasn't landed yet — name the real fix.
+      toast.error("View-once isn't enabled on the server yet", {
+        description: "Apply the latest database migration, then resend.",
+      });
+      return;
+    }
     toast.error("Message failed to send — check your connection");
   };
 
@@ -1360,6 +1399,10 @@ export function ChatPanel({
 
   const handleFiles = async (files: FileList | File[] | null) => {
     if (!files) return;
+    // View-once arms ONE gesture: snapshot it and disarm immediately so a
+    // later attach can never silently reuse it.
+    let armViewOnce = viewOnce;
+    if (armViewOnce) setViewOnce(false);
     for (const file of Array.from(files)) {
       const rawName = file.name || `pasted-image-${Date.now()}.png`;
       // Safety gate FIRST: executables, scripts, HTML/SVG and content that
@@ -1370,11 +1413,36 @@ export function ChatPanel({
         continue;
       }
       const { kind, safeName, mime } = verdict;
+      // View-once is a photo/video feature (the server enforces the same
+      // rule) — the arm is consumed by the first media file of this gesture.
+      const useViewOnce = armViewOnce && (kind === "image" || kind === "video");
+      if (useViewOnce) armViewOnce = false;
       try {
         // Images are compressed first (existing behavior), then everything is
         // uploaded to Supabase Storage. Falls back to inline data when offline
         // or before the space-media migration is applied.
         const dataUrl = await readFileAsDataUrl(file);
+        if (useViewOnce) {
+          // View-once travels INLINE inside the message row (E2E sealed) and
+          // is never uploaded to the public bucket — that is what makes
+          // "then it's gone" real. The server caps the wire payload at
+          // 18.1M chars: refuse BEFORE sending rather than failing after.
+          if (dataUrl.length > MAX_VIEW_ONCE_DATA_URL_CHARS) {
+            toast.error("Too large for view-once", {
+              description:
+                "View-once media travels inside the message — send a smaller photo or video.",
+            });
+            continue;
+          }
+          await push(kind, {
+            dataUrl,
+            fileName: safeName,
+            fileSize: file.size,
+            mimeType: mime,
+            viewOnce: true,
+          });
+          continue;
+        }
         let remoteUrl: string | null = null;
         if (kind === "image") {
           const blob = await dataUrlToBlob(dataUrl);
@@ -1393,6 +1461,33 @@ export function ChatPanel({
       } catch {
         toast.error(`Couldn't read ${safeName}`);
       }
+    }
+  };
+
+  /**
+   * Opens view-once media: the consume RPC records THIS user as a viewer
+   * server-side FIRST (so the payload can never be shown again from any
+   * device), and only then is the local copy revealed — one time, with no
+   * download and no filters.
+   */
+  const handleOpenViewOnce = async (m: Message) => {
+    if (openingViewOnce) return; // one consume at a time — no double-tap races
+    setOpeningViewOnce(true);
+    try {
+      const result = await consumeViewOnce(space.id, m.id);
+      if (result.status === "opened") {
+        openLightbox(result.url, true, m.kind === "video");
+      } else if (result.status === "already") {
+        toast.error("Already viewed", {
+          description: "View-once media can only be opened one time.",
+        });
+      } else {
+        toast.error("Couldn't open this", {
+          description: "The room didn't confirm the view — check your connection and try again.",
+        });
+      }
+    } finally {
+      setOpeningViewOnce(false);
     }
   };
 
@@ -2483,7 +2578,8 @@ export function ChatPanel({
             currentUserId={userId}
             onPollVote={handlePollVote}
             onForward={onForward}
-            onOpenImage={setLightbox}
+            onOpenImage={openLightbox}
+            onOpenViewOnce={handleOpenViewOnce}
             onPin={(message) => {
               handlePin(message);
             }}
@@ -2723,6 +2819,18 @@ export function ChatPanel({
                 icon: <ImageIcon className="size-4" />,
               },
               {
+                label: viewOnce
+                  ? "View once: ON — next photo/video"
+                  : "View once: OFF — tap to arm",
+                action: () =>
+                  setViewOnce((v) => {
+                    const next = !v;
+                    if (next) toast.info("Next photo or video will be view-once");
+                    return next;
+                  }),
+                icon: <EyeOff className={`size-4 ${viewOnce ? "text-primary" : ""}`} />,
+              },
+              {
                 label: "Document",
                 action: () => fileInputRef.current?.click(),
                 icon: <Paperclip className="size-4" />,
@@ -2770,6 +2878,19 @@ export function ChatPanel({
             </IconBtn>
             <IconBtn label="Send image" onClick={() => mediaInputRef.current?.click()}>
               <ImageIcon className="size-4" />
+            </IconBtn>
+            <IconBtn
+              label="Send next photo or video as view-once"
+              onClick={() => {
+                setViewOnce((v) => {
+                  const next = !v;
+                  if (next) toast.info("Next photo or video will be view-once");
+                  return next;
+                });
+              }}
+              className={viewOnce ? "text-primary ring-1 ring-primary" : ""}
+            >
+              <EyeOff className="size-4" />
             </IconBtn>
             <IconBtn label="Send document" onClick={() => fileInputRef.current?.click()}>
               <Paperclip className="size-4" />
@@ -2997,7 +3118,7 @@ export function ChatPanel({
                         <img
                           src={m.dataUrl}
                           alt={m.fileName || "Shared photo"}
-                          onClick={() => m.dataUrl && setLightbox(m.dataUrl)}
+                          onClick={() => m.dataUrl && openLightbox(m.dataUrl)}
                           className="h-28 w-full object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
                         />
                       )}
@@ -3079,7 +3200,8 @@ export function ChatPanel({
                     currentUserId={userId}
                     onPollVote={handlePollVote}
                     onForward={onForward}
-                    onOpenImage={setLightbox}
+                    onOpenImage={openLightbox}
+                    onOpenViewOnce={handleOpenViewOnce}
                     onPin={(message) => {
                       handlePin(message);
                       setShowStarredModal(false);
@@ -3343,63 +3465,78 @@ export function ChatPanel({
       {lightbox && (
         <div
           className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/95 p-4 sm:p-6 animate-in fade-in duration-200"
-          onClick={() => {
-            setLightbox(null);
-            setActivePhotoFilter("none");
-          }}
+          onClick={() => closeLightbox()}
         >
           <div className="absolute right-5 top-5 flex max-w-[calc(100vw-2.5rem)] flex-wrap items-center justify-end gap-2 overflow-x-auto">
-            <div
-              className="flex items-center gap-1 rounded-full bg-card px-2 py-1 shadow-xl border border-border"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <Sliders className="size-3.5 text-primary ml-1" />
-              {(["none", "grayscale", "sepia", "vintage", "neon"] as PhotoFilter[]).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setActivePhotoFilter(f)}
-                  className={
-                    "rounded-full px-2 py-0.5 text-[10px] font-medium capitalize transition-colors " +
-                    (activePhotoFilter === f
-                      ? "bg-primary text-primary-foreground font-bold"
-                      : "text-muted-foreground hover:text-foreground")
-                  }
+            {lightboxViewOnce ? (
+              // A view-once viewing is deliberately bare: no filters, no
+              // download — the one open IS the whole feature.
+              <span className="flex items-center gap-1.5 rounded-full bg-card px-3 py-1.5 text-[11px] font-semibold text-foreground shadow-xl border border-border">
+                <EyeOff className="size-3.5 text-primary" />
+                View once · no download
+              </span>
+            ) : (
+              <>
+                <div
+                  className="flex items-center gap-1 rounded-full bg-card px-2 py-1 shadow-xl border border-border"
+                  onClick={(e) => e.stopPropagation()}
                 >
-                  {f}
+                  <Sliders className="size-3.5 text-primary ml-1" />
+                  {(["none", "grayscale", "sepia", "vintage", "neon"] as PhotoFilter[]).map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setActivePhotoFilter(f)}
+                      className={
+                        "rounded-full px-2 py-0.5 text-[10px] font-medium capitalize transition-colors " +
+                        (activePhotoFilter === f
+                          ? "bg-primary text-primary-foreground font-bold"
+                          : "text-muted-foreground hover:text-foreground")
+                      }
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleSaveAttachment(lightbox, `heymamaey-photo-${Date.now()}.jpg`);
+                  }}
+                  className="flex items-center gap-1.5 rounded-full bg-card px-4 py-2 text-xs font-semibold text-foreground shadow-xl hover:text-primary transition-colors"
+                >
+                  <Download className="size-4" />
+                  <span>Download Photo</span>
                 </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                void handleSaveAttachment(lightbox, `heymamaey-photo-${Date.now()}.jpg`);
-              }}
-              className="flex items-center gap-1.5 rounded-full bg-card px-4 py-2 text-xs font-semibold text-foreground shadow-xl hover:text-primary transition-colors"
-            >
-              <Download className="size-4" />
-              <span>Download Photo</span>
-            </button>
+              </>
+            )}
             <button
               type="button"
               aria-label="Close image"
               className="rounded-full bg-card p-2 text-muted-foreground hover:text-foreground transition-colors"
-              onClick={() => {
-                setLightbox(null);
-                setActivePhotoFilter("none");
-              }}
+              onClick={() => closeLightbox()}
             >
               <X className="size-4" />
             </button>
           </div>
-          <img
-            src={lightbox}
-            alt="Full size attachment"
-            style={{ filter: getPhotoFilterStyle() }}
-            className="max-h-[85vh] max-w-full rounded-2xl object-contain shadow-2xl border border-border transition-all duration-200"
-            onClick={(e) => e.stopPropagation()}
-          />
+          {lightboxIsVideo ? (
+            <video
+              src={lightbox}
+              controls
+              autoPlay
+              className="max-h-[85vh] max-w-full rounded-2xl object-contain shadow-2xl border border-border bg-black"
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <img
+              src={lightbox}
+              alt="Full size attachment"
+              style={{ filter: getPhotoFilterStyle() }}
+              className="max-h-[85vh] max-w-full rounded-2xl object-contain shadow-2xl border border-border transition-all duration-200"
+              onClick={(e) => e.stopPropagation()}
+            />
+          )}
         </div>
       )}
       {showSoundboard && (
@@ -3474,7 +3611,8 @@ export function ChatPanel({
                     currentUserId={userId}
                     onPollVote={handlePollVote}
                     onForward={onForward}
-                    onOpenImage={(url) => setLightbox(url)}
+                    onOpenImage={openLightbox}
+                    onOpenViewOnce={handleOpenViewOnce}
                     onPin={() => handlePin(m)}
                     onStar={(msg) => toggleStar(msg)}
                     onReply={(msg) => {

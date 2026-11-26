@@ -25,6 +25,8 @@ export type Database = {
           space_id: string;
           text: string | null;
           thread_parent_id: string | null;
+          view_once: boolean;
+          viewed_by: string[] | null;
         };
         Insert: {
           author_id: string;
@@ -42,6 +44,8 @@ export type Database = {
           space_id: string;
           text?: string | null;
           thread_parent_id?: string | null;
+          view_once?: boolean;
+          viewed_by?: string[] | null;
         };
         Update: {
           author_id?: string;
@@ -59,6 +63,8 @@ export type Database = {
           space_id?: string;
           text?: string | null;
           thread_parent_id?: string | null;
+          view_once?: boolean;
+          viewed_by?: string[] | null;
         };
         Relationships: [
           {
@@ -112,6 +118,16 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      consume_view_once: {
+        Args: {
+          p_code: string;
+          p_message_id: string;
+          p_password_hash?: string;
+          p_reader_id: string;
+        };
+        /** Media URL = open it now; '' = refused (already opened / sender); null = payload already erased. */
+        Returns: string | null;
+      };
       get_user_spaces: {
         Args: { p_user_id: string };
         Returns: {
@@ -378,6 +394,7 @@ export type Database = {
           p_sig?: string;
           p_text?: string;
           p_thread_parent_id?: string;
+          p_view_once?: boolean;
         };
         Returns: {
           author_id: string;
@@ -395,6 +412,8 @@ export type Database = {
           space_id: string;
           text: string | null;
           thread_parent_id: string | null;
+          view_once: boolean;
+          viewed_by: string[] | null;
         };
         SetofOptions: {
           from: "*";
